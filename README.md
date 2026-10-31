@@ -13,7 +13,7 @@ and `AGENTS.md`), so nothing about how your agents work changes. You just get a 
   faces drawn from a few traits, or your own portraits. Faces blink.
 - **Real chats**: streaming replies, thinking and tool calls folded neatly, syntax-highlighted code, paste or drop images and files,
   steer a reply mid-stream (Enter), stop (Esc). Several chats run side by side, even across characters.
-- **Chat management**: pin, rename, archive, search (titles and what you wrote), export to HTML, delete to Trash.
+- **Chat management**: pin, rename, archive, search (titles and what you wrote), export to HTML, copy as Markdown, delete to Trash.
   Edit a message or regenerate a reply: both branch with Pi's fork, so the original stays intact.
 - **Model + thinking pickers** per chat, a context meter, `/` command menu, extension dialogs (`select`, `confirm`, `input`).
 - **Tasks**: scheduled prompts per character (daily, weekdays, weekly, every N hours). Each run is a separate headless

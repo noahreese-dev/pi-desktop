@@ -4,6 +4,7 @@
 // Needs at least two harnesses (e.g. examples/bin); real replies come from your Pi's default model, so it costs a few
 // small requests. Uses a throwaway fixture chat in that character's session folder; it is deleted (to Trash) by the test.
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -94,7 +95,12 @@ try {
   await ev(`const t = TH().find(t => t.file === ${F}); await renameThread(t, "Transformers 101"); return 1`);
   ok(await ev(`return TH().find(t => t.file === ${F})?.title === "Transformers 101" && $("#crumb").textContent.includes("Transformers 101")`), "rename updates list + header");
   await ev(`const t = TH().find(t => t.file === ${F}); threadMenu(t, document.querySelector("#threads .th.active .th-more")); return 1`);
-  ok(await ev(`return [...document.querySelectorAll("#popover .mi .k")].map(x => x.textContent).join(",") === "Unpin,Rename,Archive,Export as HTML,Delete"`), "thread ⋯ menu items");
+  ok(await ev(`return [...document.querySelectorAll("#popover .mi .k")].map(x => x.textContent).join(",") === "Unpin,Rename,Archive,Export as HTML,Copy as Markdown,Delete"`), "thread ⋯ menu items");
+  await ev(`[...document.querySelectorAll("#popover .mi")].find(x => x.textContent === "Copy as Markdown").click(); return 1`);
+  await sleep(800);
+  const md = execFileSync("pbpaste", { encoding: "utf8" });
+  ok(md.startsWith("## User\n\nWhat is a transformer?") && md.includes("## Assistant") && md.includes("```python") && md.endsWith("```\n"), "Copy as Markdown puts the conversation on the clipboard", md.slice(0, 60));
+  await ev(`const t = TH().find(t => t.file === ${F}); threadMenu(t, document.querySelector("#threads .th.active .th-more")); return 1`);
   await shot("02-thread-menu");
   await ev(`$("#popover").hidden = true; S.search = "smoke fixture ${sid.slice(0, 8)}"; renderThreads(); return 1`);
   ok(await ev(`return document.querySelectorAll("#threads .th").length === 1`), "search matches message text");

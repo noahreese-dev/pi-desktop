@@ -72,7 +72,8 @@ The page shows model output, so main.js treats it as untrusted.
 
 - `contextIsolation` and `sandbox` on, no Node in the page; `preload.js` exposes a fixed list of calls.
 - **Pi RPC allow-list:** the page may send only the commands the UI uses (`lib/core.js` `pageRpcAllowed`). Pi's RPC
-  also accepts `bash`, which the page can never reach. Chat exports may only be written to `~/Downloads` or `/tmp`.
+  also accepts `bash`, which the page can never reach. Chat exports may only be written to `~/Downloads` or `/tmp`. "Copy as Markdown" reads the session file in
+  main.js and writes the clipboard there; the page only passes a chat file path, which must belong to a known harness.
 - **Settings allow-list:** the page can change only what the Settings sheet edits. `harnessDir` and `memory` (which
   decide what runs and where data goes) are edited in `config.json` by you.
 - **Files:** reads, previews, "Open" and "Reveal" go through `safePath()`: your home folder and `/tmp` only, never

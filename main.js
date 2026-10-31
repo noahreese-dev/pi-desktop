@@ -2,7 +2,7 @@
 // "character"; the app spawns `pi-<name> --mode rpc` so the real harness (extensions,
 // skills, model, cwd) runs unchanged underneath. No prompt text is added by the app
 // unless a character file sets `persona`.
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, globalShortcut, nativeImage, nativeTheme, Notification, shell, systemPreferences, session, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, globalShortcut, nativeImage, nativeTheme, Notification, clipboard, shell, systemPreferences, session, screen } = require("electron");
 const { spawn, execFileSync, execFile } = require("child_process");
 const fs = require("fs");
 const os = require("os");
@@ -856,6 +856,14 @@ ipcMain.handle("usage:bump", (_e, id) => {
   return usage;
 });
 ipcMain.handle("sound:preview", (_e, harness) => { announce(harness, { preview: true }); return true; });
+ipcMain.handle("chat:copy-markdown", async (_e, file) => {
+  const { messages } = await chatHistory(file).catch(() => ({ messages: null }));
+  if (!messages) return { error: "Couldn't read that chat. Open it once, then try again." };
+  const md = core.chatMarkdown(messages);
+  if (!md) return { error: "Nothing to copy yet." };
+  clipboard.writeText(md);
+  return { ok: true };
+});
 ipcMain.handle("threads:meta", (_e, file, patch) => setThreadMeta(file, patch));
 ipcMain.handle("threads:trash", async (_e, file) => { try { return await trashThread(file); } catch (e) { return { error: String(e.message || e) }; } });
 ipcMain.handle("app:config", () => ({ ...config, userName: userName(), openAtLogin: loginOn() }));

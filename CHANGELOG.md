@@ -6,6 +6,8 @@
   receipts), Ilya (AI research), History (historian, historical-critical method), Ali (learning coach with the
   Learning panel) and Narges (artist, image refinement loop). Each has its own skills and workspace and works with
   any Pi provider.
+- **Copy as Markdown** in a chat's ⋯ menu: the whole conversation (your messages and the replies, code blocks
+  intact; thinking, tool calls and images left out) on the clipboard.
 - **First run:** a welcome screen instead of a blank window when no characters exist, with one-click example
   characters; plain-English errors when Pi is missing; `npm run doctor`.
 - **Security:** the page may only send allow-listed Pi RPC commands and settings; strict CSP (no remote images or

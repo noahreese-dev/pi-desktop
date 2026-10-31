@@ -102,7 +102,11 @@ PIDESK_PROFILE=/tmp/pidesk-test ./node_modules/.bin/electron . --remote-debuggin
 node tests/smoke.mjs research writer          # two harness ids; prints "N passed, 0 failed"
 ```
 
-Expected: every check passes (70 at v0.2.0). For stable results use test harnesses on a fast model with no global
+**The smoke test uses real harnesses:** it makes model calls through them, writes a fixture chat into the first
+character's real Pi session folder (moved to the Trash at the end), and reads/writes the clipboard. Point it at test
+harnesses (a `harnessDir` in the profile's config.json, e.g. copies of examples/bin), never your everyday characters.
+
+Expected: every check passes (71 at v0.2.0). For stable results use test harnesses on a fast model with no global
 extensions, e.g. `exec pi --no-extensions --no-skills --model <provider>/<fast-model> --thinking off "$@"`.
 New feature → add a check to tests/smoke.mjs (UI) or tests/unit.test.mjs (logic).
 

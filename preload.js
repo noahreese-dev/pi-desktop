@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("desk", {
   ensure: (key, harness, sessionFile) => ipcRenderer.invoke("pi:ensure", key, harness, sessionFile),
   closeChat: (key, opts) => ipcRenderer.invoke("pi:close", key, opts),
   history: (file) => ipcRenderer.invoke("chat:history", file),
+  copyMarkdown: (file) => ipcRenderer.invoke("chat:copy-markdown", file),
   permStatus: () => ipcRenderer.invoke("perm:status"),
   permOpen: (kind) => ipcRenderer.invoke("perm:open", kind),
   running: () => ipcRenderer.invoke("pi:running"),

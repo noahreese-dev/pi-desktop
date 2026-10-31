@@ -341,6 +341,7 @@ function threadMenu(t, anchor, ev) {
       item("Rename", ICON.pen, () => { S.renaming = t.file; renderThreads(); }),
       item(t.archived ? "Unarchive" : "Archive", '<rect x="3" y="4" width="14" height="4" rx="1"/><path d="M4.5 8v7.5A1.5 1.5 0 0 0 6 17h8a1.5 1.5 0 0 0 1.5-1.5V8M8 11h4"/>', () => archiveThread(t, !t.archived)),
       item("Export as HTML", '<path d="M10 3v10M6 9l4 4 4-4M4 16h12"/>', () => exportThread(t)),
+      item("Copy as Markdown", '<rect x="7" y="7" width="9" height="10" rx="1.5"/><path d="M13 7V5.5A1.5 1.5 0 0 0 11.5 4h-6A1.5 1.5 0 0 0 4 5.5v7A1.5 1.5 0 0 0 5.5 14H7"/>', () => copyThreadMarkdown(t)),
       h("div", { class: "msep" }),
       item("Delete", '<path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11"/>', () => deleteThread(t), "danger"));
   });
@@ -386,6 +387,11 @@ async function exportThread(t) {
   if (!r.success) return toast(r.error, "error");
   toast(`Exported to Downloads`);
   desk.openExport(r.data.path);
+}
+async function copyThreadMarkdown(t) {
+  const r = await desk.copyMarkdown(t.file);
+  if (r?.error) return toast(r.error, "warning");
+  toast("Copied chat as Markdown");
 }
 $("#threadSearch").addEventListener("input", (e) => { S.search = e.target.value; renderThreads(); });
 

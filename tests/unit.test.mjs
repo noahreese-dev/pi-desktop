@@ -108,3 +108,32 @@ test("allowedPath blocks tokens, keys, history and browser data anywhere under h
     assert.ok(!core.allowedPath(`${HOME}/${p}`, HOME), p);
   for (const p of ["keynote.md", "notes/.envrc-ideas.md", "Pictures/me.png"]) assert.ok(core.allowedPath(`${HOME}/${p}`, HOME), p);
 });
+
+test("chatMarkdown: user and assistant text in order, code fences intact", () => {
+  const fence = "```js\nconst a = 1;\n\n## not a heading\n```";
+  const md = core.chatMarkdown([
+    { role: "user", content: "Show me code" },
+    { role: "assistant", content: [{ type: "text", text: "Here:\n\n" + fence }] },
+    { role: "user", content: [{ type: "text", text: "Thanks" }] },
+  ]);
+  assert.equal(md, "## User\n\nShow me code\n\n## Assistant\n\nHere:\n\n" + fence + "\n\n## User\n\nThanks\n");
+});
+
+test("chatMarkdown: thinking, tool calls, tool results, images and other roles are left out", () => {
+  const md = core.chatMarkdown([
+    { role: "user", content: [{ type: "image", data: "x", mimeType: "image/png" }, { type: "text", text: "Look" }] },
+    { role: "assistant", content: [{ type: "thinking", thinking: "secret plan" }, { type: "text", text: "Checking." }, { type: "toolCall", id: "1", name: "bash", arguments: { command: "ls" } }] },
+    { role: "toolResult", toolCallId: "1", content: [{ type: "text", text: "file.txt" }] },
+    { role: "assistant", content: [{ type: "thinking", thinking: "more" }, { type: "toolCall", id: "2", name: "read", arguments: {} }] },
+    { role: "assistant", content: [{ type: "text", text: "Done." }] },
+    { role: "custom", content: "hidden" }, { role: "compactionSummary", summary: "old" },
+  ]);
+  assert.equal(md, "## User\n\nLook\n\n## Assistant\n\nChecking.\n\nDone.\n");
+  assert.ok(!/secret|bash|file\.txt|hidden|old/.test(md));
+});
+
+test("chatMarkdown: nothing to say gives an empty string", () => {
+  assert.equal(core.chatMarkdown([]), "");
+  assert.equal(core.chatMarkdown(null), "");
+  assert.equal(core.chatMarkdown([{ role: "assistant", content: [{ type: "toolCall", id: "1", name: "x", arguments: {} }] }]), "");
+});
