@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pi-research: Research with sources. Starts in ~/research.
+# A Pi Desktop harness: Pi Desktop runs "pi-research --mode rpc"; in a terminal, "pi-research" is the normal Pi TUI.
+# Starts in $HOME/research so that folder's AGENTS.md and chats belong to this character.
+export PI_HARNESS=research
+mkdir -p "$HOME/research"
+cd "$HOME/research" || exit 1
+# The terminal face (header + footer) from the pixel-coach extension, if Pi Desktop is where we expect it.
+face="${PI_DESKTOP_DIR:-$HOME/pi-desktop}/extensions/pixel-coach/index.ts"
+ext=(); [[ -f "$face" ]] && ext=(-e "$face")
+exec pi "${ext[@]}" "$@"

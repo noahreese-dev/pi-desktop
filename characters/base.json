@@ -1,0 +1,15 @@
+{
+  "name": "Pi",
+  "tagline": "General assistant",
+  "accent": "#9aa0aa",
+  "accent2": "#c7cbd0",
+  "face": { "skin": "#dcb08a", "hair": "#3b2a20", "style": "short" },
+  "quotes": ["Small, sharp tools.", "Read first. Then change.", "Evidence over confidence."],
+  "greeting": "Hello, {user}. What are we doing?",
+  "workingWord": "Working",
+  "suggestions": [
+    { "label": "What's in this folder?", "prompt": "Look around this folder and tell me what's here, in five lines." },
+    { "label": "Plan my next step", "prompt": "Ask me what I'm working on, then help me pick the next concrete step." }
+  ],
+  "finish": { "sound": "Tink", "voice": "Samantha", "say": "Pi complete." }
+}

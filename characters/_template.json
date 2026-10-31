@@ -1,0 +1,22 @@
+{
+  "_howto": "Copy to characters/<harness>.json, where <harness> matches <harnessDir>/pi-<harness>. Every field is optional; restart the app to load it. See docs/CHARACTERS.md. Pixel face: keep the face block and run `npm run faces`. Your own portrait instead: set image/imageBlink/icon (paths relative to characters/, or ~/...), e.g. made with faces/build.sh.",
+  "name": "Nova",
+  "tagline": "Video director",
+  "pinned": true,
+  "accent": "#8b7bff",
+  "accent2": "#7fd3ff",
+  "face": { "skin": "#e0b48c", "hair": "#2a1d14", "style": "cap", "beard": "none", "glasses": "none", "gear": "headphones" },
+  "quotes": ["Cut on the beat.", "Story first."],
+  "greeting": "Hey {user}. What are we shooting?",
+  "placeholder": "Describe the shot…",
+  "workingWord": "Rendering",
+  "persona": "Optional. One or two sentences appended to the system prompt. Leave out to keep context lean.",
+  "panel": "files",
+  "suggestions": [
+    { "label": "Storyboard an idea", "prompt": "Help me storyboard a new video idea." }
+  ],
+  "taskTemplates": [
+    { "name": "Morning ideas", "schedule": { "kind": "daily", "time": "09:00" }, "prompt": "Give me three fresh ideas. One line each." }
+  ],
+  "finish": { "sound": "Tink", "voice": "Samantha", "say": "Nova complete." }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Quill",
+  "tagline": "Drafts, edits, plain words",
+  "hello": "Hello, {user}",
+  "accent": "#ffb86b",
+  "accent2": "#ffd8ae",
+  "workingWord": "drafting",
+  "doneWord": "done",
+  "quoteBy": "Quill",
+  "identity": ""
+}

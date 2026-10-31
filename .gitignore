@@ -1,0 +1,18 @@
+node_modules/
+.DS_Store
+
+# Your local setup and app data (never committed)
+config.json
+threads.json
+tasks.json
+usage.json
+
+# Rendered finish sounds and their Python env
+sounds/clips/
+sounds/manifest.json
+sounds/.venv/
+__pycache__/
+
+# Runtime logs and large local models
+pi-exits.log
+models/

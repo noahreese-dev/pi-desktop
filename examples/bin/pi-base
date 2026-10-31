@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# pi-base: General assistant. Starts in your home folder.
+# A Pi Desktop harness: Pi Desktop runs "pi-base --mode rpc"; in a terminal, "pi-base" is the normal Pi TUI.
+# Starts in $HOME so that folder's AGENTS.md and chats belong to this character.
+export PI_HARNESS=base
+mkdir -p "$HOME"
+cd "$HOME" || exit 1
+# The terminal face (header + footer) from the pixel-coach extension, if Pi Desktop is where we expect it.
+face="${PI_DESKTOP_DIR:-$HOME/pi-desktop}/extensions/pixel-coach/index.ts"
+ext=(); [[ -f "$face" ]] && ext=(-e "$face")
+exec pi "${ext[@]}" "$@"

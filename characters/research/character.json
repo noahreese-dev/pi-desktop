@@ -1,0 +1,11 @@
+{
+  "name": "Scout",
+  "tagline": "Research with sources",
+  "hello": "Hello, {user}",
+  "accent": "#8be9fd",
+  "accent2": "#bff3fe",
+  "workingWord": "researching",
+  "doneWord": "done",
+  "quoteBy": "Scout",
+  "identity": ""
+}

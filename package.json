@@ -1,0 +1,39 @@
+{
+  "name": "pi-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A desktop chat app for Pi harnesses: each ~/bin/pi-<name> script becomes a character with its own face, voice and chats.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "faces": "python3 -I faces/pixel_faces.py",
+    "test": "node tests/smoke.mjs",
+    "postinstall": "node scripts/ensure-electron.mjs"
+  },
+  "devDependencies": {
+    "electron": "40.9.3"
+  },
+  "dependencies": {
+    "@highlightjs/cdn-assets": "^11.12.0",
+    "dompurify": "^3.2.0",
+    "marked": "^15.0.0"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/noahreese-dev/pi-desktop.git"
+  },
+  "homepage": "https://github.com/noahreese-dev/pi-desktop#readme",
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "electron",
+    "agent",
+    "harness",
+    "desktop",
+    "chat"
+  ],
+  "os": [
+    "darwin"
+  ]
+}

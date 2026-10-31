@@ -1,0 +1,20 @@
+{
+  "name": "Scout",
+  "tagline": "Research with sources",
+  "accent": "#8be9fd",
+  "face": { "skin": "#e6bb94", "hair": "#5b4636", "style": "short", "glasses": "round" },
+  "quotes": ["Cite everything.", "Primary sources win.", "Follow the evidence."],
+  "greeting": "What should we find out, {user}?",
+  "placeholder": "Ask Scout a research question…",
+  "workingWord": "Researching",
+  "panel": "files",
+  "suggestions": [
+    { "label": "Compare two options", "prompt": "Help me compare two options. Ask me what they are, then build a short table with sources." },
+    { "label": "Explain a paper", "prompt": "I'll paste a paper link or abstract. Explain the idea simply, then its evidence and its limits." }
+  ],
+  "taskTemplates": [
+    { "name": "Weekly reading list", "schedule": { "kind": "weekly", "day": 1, "time": "09:00" },
+      "prompt": "Suggest five things worth reading this week on the topics in NOTES.md (create it with a short placeholder if missing). One line each: title, why it matters." }
+  ],
+  "finish": { "sound": "Pop", "voice": "Karen", "say": "Scout has findings." }
+}

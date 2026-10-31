@@ -1,0 +1,11 @@
+{
+  "name": "Pi",
+  "tagline": "General assistant",
+  "hello": "Hello, {user}",
+  "accent": "#9aa0aa",
+  "accent2": "#c7cbd0",
+  "workingWord": "working",
+  "doneWord": "done",
+  "quoteBy": "Pi",
+  "identity": ""
+}
