@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# pi-engineer: Andrej, senior engineer. Grill, spec, tickets, parallel worktrees, validate. Works in the current folder.
+# A Pi Desktop harness from the character pack (packs/engineer): Pi Desktop runs "pi-engineer --mode rpc"; in a terminal,
+# "pi-engineer" is the normal Pi TUI. Installed by scripts/install-pack.sh, which fills in the Pi Desktop folder below.
+# No cd: Andrej works in whatever repo you start him from (in Pi Desktop that is your home folder, unless you set
+# "cwd" in characters/engineer.json).
+export PI_HARNESS=engineer
+desk="${PI_DESKTOP_DIR:-__PI_DESKTOP_DIR__}"
+pack="$desk/packs/engineer"
+[[ -d "$pack/skills" ]] || { echo "pi-engineer: no pack at $pack (re-run scripts/install-pack.sh engineer)" >&2; exit 1; }
+# The terminal face (header + footer) from the pixel-coach extension. It also sends Andrej's identity once.
+face="$desk/extensions/pixel-coach/index.ts"
+ext=(); [[ -f "$face" ]] && ext=(-e "$face")
+# Only this pack's skills; your own extensions (and providers) still load.
+skills=(--no-skills --skill "$pack/skills/engineer")
+# His name stays even without a face (the identity above comes from characters/engineer/, built by the installer).
+who="Your name is Andrej, a senior engineer. For technical work follow the engineer skill: grill, spec, tickets, parallel, validate."
+# Your default provider and model. To pin one, add e.g. --model anthropic/claude-sonnet-5-5 before "$@".
+exec pi "${ext[@]}" "${skills[@]}" --append-system-prompt "$who" "$@"

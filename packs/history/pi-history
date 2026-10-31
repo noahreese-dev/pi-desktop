@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# pi-history: History, historian. Earliest sources first, the historical-critical method. Starts in ~/pi-studio/history.
+# A Pi Desktop harness from the character pack (packs/history): Pi Desktop runs "pi-history --mode rpc"; in a terminal, "pi-history"
+# is the normal Pi TUI. Installed by scripts/install-pack.sh, which fills in the Pi Desktop folder below.
+# Starts in its own workspace so that folder's AGENTS.md and chats belong to this character.
+export PI_HARNESS=history
+desk="${PI_DESKTOP_DIR:-__PI_DESKTOP_DIR__}"
+pack="$desk/packs/history"
+[[ -d "$pack/skills" ]] || { echo "pi-history: no pack at $pack (re-run scripts/install-pack.sh history)" >&2; exit 1; }
+# Workspace: $PI_STUDIO/history if you set PI_STUDIO, else ~/pi-studio/history. The workspace rules are copied in once.
+ws="${PI_STUDIO:-$HOME/pi-studio}/history"
+mkdir -p "$ws"
+[[ -f "$ws/AGENTS.md" ]] || cp "$pack/workspace/AGENTS.md" "$ws/AGENTS.md"
+# Pi Desktop reads the working folder from the literal cd line below, so the default stays spelled out.
+if [[ -z "${PI_STUDIO:-}" ]]; then
+  cd "$HOME/pi-studio/history" || exit 1
+else
+  cd "$ws" || exit 1
+fi
+# The terminal face (header + footer) from the pixel-coach extension. It also sends History's identity once.
+face="$desk/extensions/pixel-coach/index.ts"
+ext=(); [[ -f "$face" ]] && ext=(-e "$face")
+# Only this pack's skills; your own extensions (and providers, web search) still load.
+skills=(--no-skills --skill "$pack/skills/history-method" --skill "$pack/skills/research-lanes" --skill "$pack/skills/findings-list")
+# Your default provider and model. To pin one, add e.g. --model anthropic/claude-sonnet-5-5 before "$@".
+exec pi "${ext[@]}" "${skills[@]}" "$@"
