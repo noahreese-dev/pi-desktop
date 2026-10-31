@@ -527,7 +527,7 @@ function runTask(id) {
   const ch = t && charById(t.character);
   if (!t || !ch || runningTasks.has(id)) return false;
   const started = Date.now(), title = `⏰ ${t.name}`;
-  const child = spawn(ch.script, ["-p", t.prompt, "--name", title], { cwd: spawnCwd(ch), env: { ...ENV, PI_DESKTOP_TASK: t.id }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(ch.script, ["-p", core.promptArg(t.prompt), "--name", title], { cwd: spawnCwd(ch), env: { ...ENV, PI_DESKTOP_TASK: t.id }, stdio: ["ignore", "pipe", "pipe"] });
   let out = "", err = "";
   child.stdout.on("data", (d) => { out = (out + d).slice(-20000); });
   child.stderr.on("data", (d) => { err = (err + d).slice(-4000); });
@@ -773,6 +773,8 @@ function addExamples() {
 }
 // Re-reads the harness folder and character files, then restarts the page (and the menu-bar list).
 function reloadCharacters() {
+  // config.json may have changed since launch (e.g. a new harnessDir): read it again first.
+  Object.assign(config, readJSON(CONFIG_PATH, {}), process.env.PIDESK_PROFILE ? readJSON(path.join(DATA_DIR, "config.json"), {}) : {});
   loadCharacters();
   if (tray) { tray.destroy(); tray = null; buildTray(); }
   applyCharacterChrome(config.defaultCharacter);
@@ -815,7 +817,10 @@ ipcMain.handle("pi:running", () => [...procs.entries()].map(([id, p]) => ({ id, 
 ipcMain.handle("pi:restart", (_e, id) => { procs.get(id)?.child.kill(); return true; });
 ipcMain.on("pi:ui-response", (_e, id, resp) => { if (resp?.type !== "extension_ui_response" || typeof resp.id !== "string") return; try { procs.get(id)?.child.stdin.write(JSON.stringify(resp) + "\n"); } catch {} });
 ipcMain.handle("tasks:list", () => publicTasks());
-ipcMain.handle("tasks:save", (_e, t) => {
+ipcMain.handle("tasks:save", (_e, given) => {
+  // Only the fields the task form edits; run history and timing stay app-owned.
+  const t = core.cleanTask(given);
+  if (!t || !charById(t.character)) return { error: "A task needs a name, a prompt and a character." };
   const i = tasks.findIndex((x) => x.id === t.id);
   const prev = i >= 0 ? tasks[i] : null;
   const keep = prev && prev.nextRunAt > Date.now() && JSON.stringify(prev.schedule) === JSON.stringify(t.schedule);

@@ -198,7 +198,7 @@ async function renderWelcome() {
         ...(st.pi ? [st.pi] : [code("npm install -g @earendil-works/pi-coding-agent"), " then run ", code("pi"), " once in a terminal and log in to a model provider."])),
       step(false, "Add characters",
         "Start with three simple examples (Pi, Scout, Quill), or install the character pack (Andrej, Ilya, History, Ali, Narges) from a terminal: ",
-        code(`cd ${st.repo} && scripts/install-pack.sh all`), ". Your own: ", code("scripts/new-character.sh <id>"), ".")),
+        code(`cd "${st.repo}" && scripts/install-pack.sh all`), ". Your own: ", code("scripts/new-character.sh <id>"), ".")),
     h("div", { class: "welcome-actions" }, addBtn, h("button", { class: "btn", onclick: () => desk.setupReload() }, "Reload")),
     h("p", { class: "fh" }, "Harness scripts somewhere else? Set harnessDir in config.json (see README), then Reload.")));
 }
@@ -1397,8 +1397,9 @@ function taskForm(t) {
   kind.addEventListener("change", sync); sync();
   const save = async () => {
     if (!name.value.trim() || !prompt.value.trim()) return toast("Give the task a name and a prompt.", "warning");
-    await desk.saveTask({ ...t, character: S.active, name: name.value.trim(), prompt: prompt.value.trim(), enabled: t.enabled ?? true,
+    const r = await desk.saveTask({ ...t, character: S.active, name: name.value.trim(), prompt: prompt.value.trim(), enabled: t.enabled ?? true,
       schedule: kind.value === "hourly" ? { kind: "hourly", every: +every.value || 1 } : { kind: kind.value, time: time.value || "09:00", day: +day.value } });
+    if (r?.error) return toast(r.error, "error");
     S.taskForm = null; await loadTasks(); renderPanel();
   };
   return h("div", { class: "task-form" }, name, prompt, row,
@@ -1680,7 +1681,7 @@ function renderCrash() {
   if (!p.crashed) return;
   // The two first-run failures get a plain answer: pi not on the PATH, or the harness script itself missing/not executable.
   const err = p.crashed.stderr || "";
-  const why = /\bpi: (command )?not found|exec: pi: not found/.test(err) ? "Pi isn't installed (or isn't on your PATH). Run: npm install -g @earendil-works/pi-coding-agent, then Restart."
+  const why = /\bpi: (command )?not found|exec: pi: not found|command not found: pi\b/.test(err) ? "Pi isn't installed (or isn't on your PATH). Run: npm install -g @earendil-works/pi-coding-agent, then Restart."
     : /ENOENT|EACCES|permission denied|No such file/i.test(err) && p.crashed.code === 127 ? `The harness script for ${C().name} is missing or not executable (chmod +x it), then Restart.`
     : `${C().name}'s Pi process stopped (exit ${p.crashed.code}).`;
   box.replaceChildren(h("span", {}, why),

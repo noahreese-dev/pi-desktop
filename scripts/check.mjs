@@ -1,4 +1,4 @@
-// npm run check: syntax-checks every JS file and shell script in the repo (what CI runs, plus the unit tests).
+// npm run check: syntax-checks every JS file and shell script in the repo (with the unit tests, everything a CI job needs: no npm install).
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";

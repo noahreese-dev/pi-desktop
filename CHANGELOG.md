@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 (2026-10-31)
+
+Fixes from the post-release review:
+- Reload on the welcome screen now re-reads config.json (a new `harnessDir` used to need a restart).
+- Scheduled tasks whose prompt starts with `-` or `@` no longer break (or attach a file); tasks saved from the
+  window are type-checked.
+- More files the window may never read (`.envrc`, shell rc files, Claude and Pi credential/model files) or "Open"
+  (`.py`, Shortcuts, server-location files, screen savers and other plug-ins).
+- `npm run doctor` no longer fails a fresh clone that has no characters yet.
+- Crash banner recognises zsh's "command not found: pi"; the welcome screen's install command survives spaces in the path.
+- Docs: `doneWord`, PDF previews, how packs are found.
+
 ## 0.2.0 (2026-10-31)
 
 - **Character pack** (`packs/`, `scripts/install-pack.sh all`): Andrej (engineer: grill, spec, tickets, worktrees,

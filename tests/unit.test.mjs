@@ -137,3 +137,24 @@ test("chatMarkdown: nothing to say gives an empty string", () => {
   assert.equal(core.chatMarkdown(null), "");
   assert.equal(core.chatMarkdown([{ role: "assistant", content: [{ type: "toolCall", id: "1", name: "x", arguments: {} }] }]), "");
 });
+
+test("promptArg keeps prompts that start with - or @ as prompts", () => {
+  assert.equal(core.promptArg("summarize"), "summarize");
+  assert.equal(core.promptArg("- summarize my day"), " - summarize my day");
+  assert.equal(core.promptArg("@notes.md what changed?"), " @notes.md what changed?");
+});
+
+test("cleanTask type-checks what the page saves", () => {
+  assert.equal(core.cleanTask({ name: "x", prompt: 42, character: "base" }), null);
+  assert.equal(core.cleanTask({ name: "x", prompt: "hi", character: "../evil" }), null);
+  assert.equal(core.cleanTask(null), null);
+  const t = core.cleanTask({ name: " Morning ", prompt: "ideas", character: "base", schedule: { kind: "weekly", time: "25:99", day: 9 }, runs: ["fake"], nextRunAt: 1, id: "t1" });
+  assert.deepEqual(t, { name: "Morning", prompt: "ideas", character: "base", schedule: { kind: "weekly", time: "09:00", day: 6 }, enabled: true, id: "t1" });
+  assert.deepEqual(core.cleanTask({ name: "h", prompt: "p", character: "a", schedule: { kind: "hourly", every: 0 } }).schedule, { kind: "hourly", every: 1 });
+});
+
+test("secret and launch lists cover the review's gaps", () => {
+  for (const p of [".envrc", "proj/.envrc", ".claude/.credentials.json", ".pi/agent/models.json", ".zshrc", "Library/Application Support/Claude/x"])
+    assert.ok(!core.allowedPath(`${HOME}/${p}`, HOME), p);
+  for (const f of ["/a/run.py", "/a/x.shortcut", "/a/x.afploc", "/a/x.saver"]) assert.ok(core.LAUNCHES.test(f), f);
+});

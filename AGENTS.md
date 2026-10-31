@@ -85,7 +85,7 @@ docs/               ARCHITECTURE, CHARACTERS, HARNESSES
   gate it on a character field or config key so it's opt-in.
 - **Add a character:** `scripts/new-character.sh <id> "Name" "tagline"`, or a pack (below).
 - **Add to the character pack:** `packs/<id>/` with `pi-<id>`, `character.json`, `skills/`, `workspace/AGENTS.md`,
-  `README.md`; register it in packs/README.md and `scripts/install-pack.sh`. A persona may share a first name or a
+  `README.md`; add it to the table in packs/README.md (`scripts/install-pack.sh` finds packs by itself). A persona may share a first name or a
   working style with someone, but never names, imitates, quotes or implies the endorsement of a real person, and faces
   are generated pixel art, never likenesses. No provider/model pinned; never `--no-extensions` in a harness (it
   removes the user's provider extensions).
@@ -106,7 +106,7 @@ node tests/smoke.mjs research writer          # two harness ids; prints "N passe
 character's real Pi session folder (moved to the Trash at the end), and reads/writes the clipboard. Point it at test
 harnesses (a `harnessDir` in the profile's config.json, e.g. copies of examples/bin), never your everyday characters.
 
-Expected: every check passes (71 at v0.2.0). For stable results use test harnesses on a fast model with no global
+Expected: every check passes (71 at v0.2.1). For stable results use test harnesses on a fast model with no global
 extensions, e.g. `exec pi --no-extensions --no-skills --model <provider>/<fast-model> --thinking off "$@"`.
 New feature → add a check to tests/smoke.mjs (UI) or tests/unit.test.mjs (logic).
 

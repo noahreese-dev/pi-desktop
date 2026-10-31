@@ -58,7 +58,7 @@ console.log("Characters");
 const bin = expand(config.harnessDir || "~/bin");
 let harnesses = [];
 try { harnesses = fs.readdirSync(bin).filter((f) => f.startsWith("pi-") && f !== "pi-ls").sort(); } catch {}
-if (!harnesses.length) bad(`No pi-* harness scripts in ${tilde(bin)}`, `Start the app and click "Add the example characters", or run: scripts/install-pack.sh all`);
+if (!harnesses.length) warn(`No pi-* harness scripts in ${tilde(bin)} yet`, `Start the app and click "Add the example characters", or run: scripts/install-pack.sh all`);
 for (const f of harnesses) {
   const file = path.join(bin, f), id = f.slice(3);
   let mode = 0; try { mode = fs.statSync(file).mode; } catch {}
@@ -67,7 +67,7 @@ for (const f of harnesses) {
   if (!core.parseHarness(src, HOME)) continue; // an alias of another harness
   const charFile = path.join(ROOT, "characters", `${id}.json`);
   let note = "no character file (default face and name)";
-  if (fs.existsSync(charFile)) { try { readJSON(charFile); note = "character file ok"; } catch (e) { bad(`characters/${id}.json isn't valid JSON (${e.message})`); continue; } }
+  if (fs.existsSync(charFile)) { try { readJSON(charFile); note = "character file ok"; } catch (e) { warn(`characters/${id}.json isn't valid JSON (${e.message}); the app uses a default face and name`); continue; } }
   ok(`${f}: ${note}`);
 }
 

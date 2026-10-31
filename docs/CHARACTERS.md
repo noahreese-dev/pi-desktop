@@ -32,6 +32,7 @@ Every field is optional. Restart the app after editing. `characters/_template.js
 | `greeting` | Big line on an empty chat. `{user}` becomes your name. |
 | `placeholder` | Message box placeholder. |
 | `workingWord` | "Scout is *researching*…" while a reply streams. |
+| `doneWord` | The word the terminal face shows when a reply finishes ("Andrej *shipped*"). Default `done`. |
 | `suggestions` | `[{ "label", "prompt" }]` chips on an empty chat. |
 | `persona` | One or two sentences passed to Pi as `--append-system-prompt`. Leave it out to add nothing to the context. |
 | `panel` | `"files"` (default) or `"learning"` (adds Course, Lesson and Profile tabs; see below). |

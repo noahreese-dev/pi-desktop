@@ -81,7 +81,8 @@ The page shows model output, so main.js treats it as untrusted.
   "Open" never launches apps or scripts (`.app`, `.command`, executables…); those are shown in Finder instead.
 - **Model markdown:** sanitized with DOMPurify, no `<style>`/forms/`style=`; remote images become links (a rendered
   image URL could carry data out). The CSP allows no network connections from the page and no remote images.
-- Lessons and HTML previews run in sandboxed iframes (no same-origin, no popups). Permissions (microphone,
+- Lessons and HTML previews run in sandboxed iframes (no same-origin, no popups). PDF previews use Chromium's
+  built-in PDF viewer, which needs an unsandboxed frame; it renders the file, it doesn't run it. Permissions (microphone,
   clipboard) are granted to the app's own page only.
 - Links open in your browser; the window can't navigate away from `app/index.html`.
 - A character file can't change which script runs (`id`/`script` are ignored in character JSON).
@@ -99,7 +100,7 @@ writes the bank; getting memories *into* your chats is your harness's job (e.g. 
 ## Testing
 
 `npm run check` (syntax of every JS, shell and JSON file) and `npm test` (offline unit tests for `lib/core.js`, under a
-second) need nothing but Node and run in CI. `npm run doctor` checks a machine's setup.
+second) need nothing but Node (no `npm install`), so they suit a CI job. `npm run doctor` checks a machine's setup.
 
 `tests/smoke.mjs` drives a real copy of the app over CDP with real clicks and real model calls:
 
