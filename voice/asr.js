@@ -22,7 +22,14 @@ function createAsr({ env = process.env, fallbackModel, vocabulary = () => "", lo
     if (ready) return ready;
     ready = new Promise((resolve, reject) => {
       // A server left behind by a Pi Desktop that was force-quit holds the port (and ~1 GB): clear it first.
-      try { for (const pid of require("child_process").execFileSync("lsof", ["-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).split(/\s+/).filter(Boolean)) process.kill(+pid); } catch {}
+      // Only if it really is whisper-server: never kill something else that happens to use the port.
+      const { execFileSync } = require("child_process");
+      try {
+        for (const pid of execFileSync("lsof", ["-t", `-iTCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf8" }).split(/\s+/).filter(Boolean)) {
+          const cmd = execFileSync("ps", ["-o", "comm=", "-p", pid], { encoding: "utf8" }).trim();
+          if (path.basename(cmd) === "whisper-server") process.kill(+pid);
+        }
+      } catch {}
       // Runs under a tiny watcher that ends it if Pi Desktop goes away without a clean quit.
       const args = ["-m", model, "--host", "127.0.0.1", "--port", String(port), "-sns", "-t", String(Math.max(4, Math.min(8, os.cpus().length - 2)))];
       proc = spawn("/bin/sh", ["-c", 'whisper-server "$@" & w=$!; trap "kill $w 2>/dev/null" EXIT TERM; while kill -0 ' + process.pid + ' 2>/dev/null && kill -0 $w 2>/dev/null; do sleep 3; done', "sh", ...args],

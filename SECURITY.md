@@ -10,5 +10,7 @@ Please don't open a public issue. Use GitHub's **Report a vulnerability** button
 (private advisory). Include what you found, how to reproduce it, and the macOS / Node / Electron versions.
 You'll get a reply within a week.
 
-In scope: anything that lets the page (or content shown in it: model output, files, links) read files outside
-`safePath()`, run commands, reach Node APIs, or navigate the window away from `app/index.html`.
+In scope: anything that lets the page (or content shown in it: model output, files, lessons, links) read files outside
+`safePath()`, send a Pi RPC command outside the allow-list, change settings outside the Settings allow-list, run
+commands or launch apps, load remote content or send data out, reach Node APIs, or navigate the window away from
+`app/index.html`. Out of scope: what your own harness, extensions or model do; Pi runs with your user's permissions.

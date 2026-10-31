@@ -34,8 +34,9 @@ and `AGENTS.md`), so nothing about how your agents work changes. You just get a 
 - Node.js 20+.
 - Pi installed and working in your terminal: `npm install -g @earendil-works/pi-coding-agent`, then `pi` with a provider you've logged into.
 - Optional: Python 3 + Pillow for pixel faces (generated faces for the examples are already included);
-  `brew install whisper-cpp ffmpeg` plus a whisper model for voice typing. Faster, more accurate: put
-  `ggml-large-v3-turbo-q5_0.bin` in `models/` (gitignored) and the app keeps it loaded in `whisper-server`.
+  `brew install whisper-cpp ffmpeg` plus a whisper model in `models/` (gitignored) for voice typing:
+  `ggml-small.en-q5_1.bin` from [whisper.cpp's models](https://huggingface.co/ggerganov/whisper.cpp). Faster and more
+  accurate: also add `ggml-large-v3-turbo-q5_0.bin`; the app keeps it loaded in `whisper-server`.
 
 ## Quick start
 
@@ -43,16 +44,20 @@ and `AGENTS.md`), so nothing about how your agents work changes. You just get a 
 git clone https://github.com/noahreese-dev/pi-desktop.git ~/pi-desktop
 cd ~/pi-desktop
 npm install
-
-# Try the three example characters (Pi, Scout, Quill), or skip this if you already have ~/bin/pi-* scripts.
-mkdir -p ~/bin && cp -n examples/bin/pi-* ~/bin/
-
-cp config.example.json config.json      # optional: see Config below
+npm run doctor      # checks Node, Pi, your harnesses and the optional extras; says how to fix anything missing
 npm start
 ```
 
-Each example script runs `pi` with your default provider and model. Add `--provider`/`--model` to the `exec pi` line
-to pin one. The examples work in ~/research and ~/writing (created on first run).
+No characters yet? The app opens on a welcome screen: **Add the example characters** puts three simple ones
+(Pi, Scout, Quill) in `~/bin`. For five fuller characters with their own skills (an engineer, an AI researcher, a
+historian, a learning coach and an artist), install the [character pack](packs/README.md):
+
+```bash
+scripts/install-pack.sh all
+```
+
+Every character runs `pi` with your default provider and model. Add `--model provider/id` to the `exec pi` line of a
+harness script to pin one. `cp config.example.json config.json` if you want to change settings (see Config below).
 
 ## Add a character
 
@@ -75,8 +80,11 @@ suggestions, finish line), run `npm run faces`, restart. Already have a harness?
 | `harnessDir` | `~/bin` | Where `pi-*` scripts are found. |
 | `defaultCharacter` | `base` | Shown on first launch. |
 | `hotkey` | `Alt+Shift+Space` | Global show/hide ([Electron accelerator](https://www.electronjs.org/docs/latest/api/accelerator)). |
-| `whisperModel` | `~/models/whisper/ggml-small.en-q5_1.bin` | For voice typing. |
+| `whisperModel` | `models/ggml-small.en-q5_1.bin` | For voice typing. Relative paths are inside the repo (`models/` is gitignored). |
 | `notifyWhenHidden` | `true` | Notification when a reply finishes while the app is hidden. |
+| `showThinking` | `true` | Show the model's thinking (folded) in replies. |
+| `finishSound`, `finishVoice` | `true` | The chime and the spoken line when a reply finishes. |
+| `finishVolume` | `0.8` | Volume of the finish sound and voice, 0 to 1. |
 | `modelProviders` | `[]` | Limit the model picker to these providers (plus each harness's default). Empty = all. |
 | `memory` | `null` | `{ "url", "bank", "explorer" }` turns on the Memory tab ([Hindsight](https://github.com/vectorize-io/hindsight)). |
 

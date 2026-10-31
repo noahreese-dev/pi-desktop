@@ -3,8 +3,12 @@
   "harnessDir": "~/bin",
   "defaultCharacter": "base",
   "hotkey": "Alt+Shift+Space",
-  "whisperModel": "~/models/whisper/ggml-small.en-q5_1.bin",
+  "whisperModel": "models/ggml-small.en-q5_1.bin",
   "notifyWhenHidden": true,
+  "showThinking": true,
+  "finishSound": true,
+  "finishVoice": true,
+  "finishVolume": 0.8,
   "modelProviders": [],
   "memory": null
 }

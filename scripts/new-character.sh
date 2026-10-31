@@ -11,6 +11,9 @@ id=${1:?usage: new-character.sh <id> [\"Name\"] [\"tagline\"]}
 name=${2:-$(tr '[:lower:]' '[:upper:]' <<<"${id:0:1}")${id:1}}
 tagline=${3:-}
 repo=$(cd "$(dirname "$0")/.." && pwd)
+command -v python3 >/dev/null || { echo "needs python3 (it ships with the Xcode command line tools: xcode-select --install)" >&2; exit 1; }
+# Text going into a sed replacement: escape \ | & so a tagline like "Q&A | notes" survives.
+sedq() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
 bin=$(python3 -I -c 'import json,os,sys; c={}
 try: c=json.load(open(sys.argv[1]))
 except Exception: pass
@@ -20,7 +23,8 @@ mkdir -p "$bin"
 script="$bin/pi-$id"
 if [[ -e $script ]]; then echo "keep   $script (exists)"; else
   sed -e "s/pi-base/pi-$id/g" -e "s/PI_HARNESS=base/PI_HARNESS=$id/" \
-      -e "s|General assistant. Starts in your home folder.|${tagline:-$name}. Starts in ~/$id.|" \
+      -e "s|General assistant. Starts in your home folder.|$(sedq "${tagline:-$name}"). Starts in ~/$id.|" \
+      -e "s|\\\${PI_DESKTOP_DIR:-\\\$HOME/pi-desktop}|\\\${PI_DESKTOP_DIR:-$(sedq "$repo")}|" \
       -e "s|\"\$HOME\"|\"\$HOME/$id\"|g" -e "s|in \$HOME so|in \$HOME/$id so|" \
       "$repo/examples/bin/pi-base" > "$script"
   chmod +x "$script"; echo "wrote  $script"

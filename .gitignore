@@ -1,18 +1,32 @@
 node_modules/
 .DS_Store
+npm-debug.log*
+*.log
+.env
+.env.*
+.vscode/
+.idea/
 
 # Your local setup and app data (never committed)
 config.json
 threads.json
 tasks.json
 usage.json
+pi-exits.log
+models/
+
+# Your own characters stay local: only the shipped examples are tracked.
+characters/*
+!characters/_template.json
+!characters/base.json
+!characters/base/
+!characters/research.json
+!characters/research/
+!characters/writer.json
+!characters/writer/
 
 # Rendered finish sounds and their Python env
 sounds/clips/
 sounds/manifest.json
 sounds/.venv/
 __pycache__/
-
-# Runtime logs and large local models
-pi-exits.log
-models/

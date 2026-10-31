@@ -1,6 +1,7 @@
 # Contributing
 
-Thanks for helping. The bar: small, readable, no new build step.
+Thanks for helping. The bar: small, readable, no new build step. The full rules, layout and gotchas are in
+[AGENTS.md](AGENTS.md) (written for AI agents, just as useful for people).
 
 ## Ground rules
 
@@ -16,14 +17,15 @@ Thanks for helping. The bar: small, readable, no new build step.
 ## Before a PR
 
 ```bash
-node --check main.js && node --check preload.js && node --check app/renderer.js && node --check voice/asr.js
-python3 -I faces/pixel_faces.py          # if you touched faces
+npm run check && npm test                 # always
+npm run faces                             # if you touched faces
+# UI or main-process changes: the end-to-end smoke test, against an isolated copy of the app
 PIDESK_PROFILE=/tmp/pidesk-test ./node_modules/.bin/electron . --remote-debugging-port=9333 &
 node tests/smoke.mjs <character> <other-character>
 ```
 
-Include the smoke-test summary line in the PR, plus a screenshot for any UI change. If you add a feature, add a check
-for it to `tests/smoke.mjs`.
+Include the smoke-test summary line in the PR, plus a screenshot for any UI change. New logic goes in `lib/core.js`
+with a test in `tests/unit.test.mjs`; a new UI feature gets a check in `tests/smoke.mjs`. Update CHANGELOG.md.
 
 ## Adding a side-panel tab
 

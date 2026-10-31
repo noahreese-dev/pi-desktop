@@ -16,7 +16,10 @@ Writes characters/<id>/:
 Requires Pillow (pip install pillow)."""
 import json, sys
 from pathlib import Path
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    sys.exit("pixel faces need Pillow: python3 -m pip install --user pillow  (the app falls back to a letter avatar until then)")
 
 CHARS = Path(__file__).resolve().parent.parent / "characters"
 N = 20

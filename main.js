@@ -8,6 +8,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const core = require("./lib/core");
 
 const HOME = os.homedir();
 const ROOT = __dirname;
@@ -24,7 +25,7 @@ const config = Object.assign({
   harnessDir: "~/bin",
   hotkey: "Alt+Shift+Space",
   defaultCharacter: "base",
-  whisperModel: "~/models/whisper/ggml-small.en-q5_1.bin",
+  whisperModel: "models/ggml-small.en-q5_1.bin", // relative paths are inside this repo (models/ is gitignored)
   notifyWhenHidden: true,
   modelProviders: [], // empty = the model picker offers every provider Pi knows
   memory: null,       // { "url": "http://127.0.0.1:8888", "bank": "default", "explorer": "http://127.0.0.1:9999" } turns on the Memory tab (Hindsight)
@@ -55,12 +56,8 @@ function discoverHarnesses() {
     const file = path.join(bin, f);
     let src = "";
     try { src = fs.readFileSync(file, "utf8"); } catch { continue; }
-    const id = f.slice(3);
-    if (/^exec "[^"]*\/pi-[\w-]+" "\$@"\s*$/m.test(src) && src.length < 400) continue; // a one-line alias of another harness: not a character of its own
-    const desc = (src.split("\n")[1] || "").replace(/^#\s*pi-[\w-]+:\s*/, "").trim();
-    // The folder the script cd's into. A quoted path may contain spaces ("$HOME/My Projects/site").
-    const cd = src.match(/^\s*cd\s+"(\$HOME|~)([^"]*)"/m) || src.match(/^\s*cd\s+(\$HOME|~)([^"\s|;&]*)/m);
-    out.push({ id, script: file, description: desc, cwd: cd ? HOME + cd[2] : HOME });
+    const h = core.parseHarness(src, HOME);
+    if (h) out.push({ id: f.slice(3), script: file, ...h }); // null = a one-line alias of another harness, not a character
   }
   return out;
 }
@@ -86,6 +83,8 @@ function loadCharacters() {
   const dir = CHAR_DIR;
   characters = discoverHarnesses().map((h) => {
     const c = readJSON(path.join(dir, `${h.id}.json`), null);
+    // A character file describes how a character looks; it can't change which script runs or what the character is called internally.
+    if (c) for (const k of ["id", "script", "description", "custom"]) delete c[k];
     const custom = !!c;
     const short = h.description.split(/ \(|\. |, /)[0].replace(/\.$/, "").slice(0, 70);
     const ch = Object.assign({ name: h.id[0].toUpperCase() + h.id.slice(1), tagline: short }, h, c || {}, { custom });
@@ -106,6 +105,7 @@ function loadCharacters() {
   characters.sort((a, b) => (b.custom - a.custom) || (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || a.id.localeCompare(b.id));
 }
 const charById = (id) => characters.find((c) => c.id === id);
+const INDEX_URL = pathToFileURL(path.join(ROOT, "app", "index.html")).href;
 
 // ---------- Pi RPC processes (one long-lived child per harness) ----------
 const procs = new Map();
@@ -161,7 +161,6 @@ function startPi(key, harness, sessionFile) {
     send("pi:exit", { id: key, harness, code, signal, closed: !!p.closing, stderr: p.stderr.slice(-1200) });
   });
   procs.set(key, p);
-  send("pi:started", { id: key, harness });
   // A fresh (not resumed) chat boots with the harness default model; remember it once per harness.
   p.ready = rpc(key, { type: "get_state" }, 60000).then((r) => {
     const d = r?.data;
@@ -286,14 +285,10 @@ function seedUsage() {
 }
 
 // ---------- chat history (Pi's own session files) ----------
-const sessionDirFor = (cwd) => path.join(SESSIONS_ROOT, "--" + cwd.replace(/^\//, "").replace(/\//g, "-") + "--");
+const sessionDirFor = (cwd) => path.join(SESSIONS_ROOT, core.sessionDirName(cwd));
 const titleCache = new Map();
 
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.filter((b) => b.type === "text").map((b) => b.text).join(" ");
-  return "";
-}
+const { textOf } = core;
 
 function sessionMeta(file) {
   const st = fs.statSync(file);
@@ -317,21 +312,8 @@ function sessionMeta(file) {
     if (!title) title = t;
     if (snippet.length < 3000) snippet += " " + t.slice(0, 600);
   }
-  // Did the last turn finish? Looked at from the end of the file: a turn cut off mid-tool, an unanswered message, or an error that
-  // a retry would have fixed (process killed, connection dropped) is "interrupted". A deliberate Stop and billing/quota errors are not.
-  let end = "";
-  const tailLines = data.split("\n");
-  for (let i = tailLines.length - 1; i >= 0 && !end; i--) {
-    const ln = tailLines[i];
-    if (!ln.includes('"role"')) continue;
-    let m; try { m = JSON.parse(ln).message; } catch { continue; }
-    if (!m?.role || m.role === "system" || m.role === "custom") continue;
-    const err = String(m.errorMessage || "");
-    if (m.role === "toolResult" || m.role === "user") end = "cut";
-    else if (m.role === "assistant" && m.stopReason === "toolUse") end = "cut";
-    else if (m.role === "assistant" && m.stopReason === "error" && /exited with code|terminated|EPROTO|ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|unable to connect|can'?t reach|no response|network|connection|fetch failed|socket/i.test(err) && !/subscription|quota|billing|session limit|five_hour|ENOSPC|prompt is too long/i.test(err)) end = "cut";
-    else end = "done";
-  }
+  // Did the last turn finish? ("cut" = stopped part-way: the chat list offers Continue.)
+  const end = core.lastTurnState(data.split("\n"));
   const identity = (data.match(/"customType"\s*:\s*"([a-z0-9]+)-identity"/) || [])[1] || ""; // set by a character's extension on its first turn
   const meta = { file, identity, cut: end === "cut", title: (name || title || "Untitled").replace(/\s+/g, " ").trim().slice(0, 90), mtime: st.mtimeMs, userMessages: count, snippet: snippet.replace(/\s+/g, " ").toLowerCase() };
   titleCache.set(file, { mtime: st.mtimeMs, meta });
@@ -432,38 +414,36 @@ async function chatHistory(file) {
   return { messages };
 }
 
-// Renderer file access is limited to your home folder (and /tmp), never secrets/credential stores.
-const SECRET = /(^|\/)(\.ssh|\.gnupg|\.aws|\.netrc|\.docker|\.kube|Keychains|auth\.json|credentials(\.json)?|\.env(\.|$))/;
+// Renderer file access is limited to your home folder (and /tmp), never secrets/credential stores (core.allowedPath).
 function safePath(p) {
   if (typeof p !== "string" || !p) return null;
   let real = path.resolve(expand(p));
   try { real = fs.realpathSync(real); } catch {}
-  const inHome = real === HOME || real.startsWith(HOME + path.sep);
-  const inTmp = /^\/(private\/)?tmp\//.test(real);
-  if (!(inHome || inTmp) || SECRET.test(real)) return null;
-  return real;
+  return core.allowedPath(real, HOME) ? real : null;
 }
 
 // ---------- learning workspace (for the learning panel) ----------
 function learningTopics(root) {
   root = expand(root || "~/learning");
   const topics = [];
-  const scan = (dir, legacy) => {
+  // Every folder in the root is a topic. One with a mission, lessons or learning records is a course; anything else is
+  // notes the coach can turn into a course ("legacy" in the panel).
+  const scan = (dir) => {
     let ents = [];
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
-      if (!e.isDirectory() || e.name.startsWith(".") || (!legacy && e.name === "history")) continue;
+      if (!e.isDirectory() || e.name.startsWith(".")) continue;
       const p = path.join(dir, e.name);
       const ls = (sub) => { try { return fs.readdirSync(path.join(p, sub)).filter((f) => !f.startsWith(".")).sort(); } catch { return []; } };
       let mission = "";
       try { mission = fs.readFileSync(path.join(p, "MISSION.md"), "utf8").split("\n").find((l) => l.trim() && !l.startsWith("#")) || ""; } catch {}
       const lessons = ls("lessons").filter((f) => f.endsWith(".html")).map((f) => ({ name: f, path: path.join(p, "lessons", f) }));
       const reference = ls("reference").filter((f) => f.endsWith(".html")).map((f) => ({ name: f, path: path.join(p, "reference", f) }));
-      topics.push({ name: e.name, path: p, legacy, mission: mission.trim(), lessons, reference, records: ls("learning-records").length });
+      const records = ls("learning-records").length, hasMission = fs.existsSync(path.join(p, "MISSION.md"));
+      topics.push({ name: e.name, path: p, legacy: !hasMission && !lessons.length && !records, mission: mission.trim(), lessons, reference, records });
     }
   };
-  scan(root, false);
-  scan(path.join(root, "history"), true);
+  scan(root);
   let profile = "";
   try { profile = fs.readFileSync(path.join(root, "PROFILE.md"), "utf8"); } catch {}
   return { root, topics, profile };
@@ -492,16 +472,16 @@ function topicDetail(dir) {
   };
 }
 
-let lessonWatcher = null;
+const lessonWatchers = new Map(); // one per learning root (two learning characters may use different folders)
 function watchLessons(root) {
-  if (lessonWatcher) return;
-  root = expand(root || "~/learning");
+  if (lessonWatchers.has(root)) return;
   try {
-    lessonWatcher = fs.watch(root, { recursive: true }, (_e, rel) => {
+    lessonWatchers.set(root, null);
+    lessonWatchers.set(root, fs.watch(root, { recursive: true }, (_e, rel) => {
       if (!rel || !/(^|\/)(lessons|reference)\/[^/]+\.html$/.test(rel)) return;
       const full = path.join(root, rel);
       if (fs.existsSync(full)) send("learn:lesson", { path: full });
-    });
+    }));
   } catch {}
 }
 
@@ -513,7 +493,7 @@ function asr() {
   if (!ownAsr) {
     const { createAsr } = require("./voice/asr");
     const vocabulary = () => `${userName()} talking to the AI characters ${characters.map((c) => c.name.replace(/[^\p{L}\p{N} ]/gu, "").trim()).filter(Boolean).join(", ")} in Pi Desktop.`;
-    ownAsr = createAsr({ env: ENV, fallbackModel: expand(config.whisperModel), vocabulary, log: (m) => console.log(m) });
+    ownAsr = createAsr({ env: ENV, fallbackModel: whisperModelPath(), vocabulary, log: (m) => console.log(m) });
   }
   return ownAsr;
 }
@@ -531,19 +511,7 @@ const runningTasks = new Map();
 const saveTasks = () => { fs.writeFileSync(TASKS_PATH, JSON.stringify(tasks, null, 2)); send("tasks:update", publicTasks()); };
 const publicTasks = () => tasks.map((t) => ({ ...t, running: runningTasks.has(t.id) }));
 
-function nextRun(t, from = Date.now()) {
-  const sc = t.schedule || {};
-  if (sc.kind === "hourly") return from + Math.max(1, +sc.every || 1) * 3600e3;
-  const [hh, mm] = String(sc.time || "09:00").split(":").map(Number);
-  const d = new Date(from); d.setSeconds(0, 0); d.setHours(hh, mm);
-  for (let i = 0; i < 8; i++) {
-    const day = d.getDay();
-    const okDay = sc.kind === "weekdays" ? day >= 1 && day <= 5 : sc.kind === "weekly" ? day === (+sc.day || 1) : true;
-    if (okDay && d.getTime() > from) return d.getTime();
-    d.setDate(d.getDate() + 1); d.setHours(hh, mm);
-  }
-  return from + 864e5;
-}
+const nextRun = (t, from = Date.now()) => core.nextRun(t.schedule, from);
 
 function findTaskSession(ch, name, since) {
   const dir = sessionDirFor(ch.cwd);
@@ -656,18 +624,39 @@ function applyCharacterChrome(id) {
   }
 }
 
+// "Open at login". A packaged app uses macOS login items. Run from source (npm start), a login item would launch bare
+// Electron without this app, so a LaunchAgent that runs this checkout is installed instead (a test profile keeps its own).
+const AGENT = process.env.PIDESK_PROFILE ? path.join(DATA_DIR, "launch-agent.plist") : path.join(HOME, "Library/LaunchAgents/dev.pi-desktop.app.plist");
+const loginOn = () => (app.isPackaged ? app.getLoginItemSettings().openAtLogin : fs.existsSync(AGENT));
+function setLogin(on) {
+  if (app.isPackaged) return app.setLoginItemSettings({ openAtLogin: !!on });
+  if (!on) return fs.rmSync(AGENT, { force: true });
+  const x = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  fs.mkdirSync(path.dirname(AGENT), { recursive: true });
+  fs.writeFileSync(AGENT, `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.pi-desktop.app</string>
+  <key>ProgramArguments</key><array><string>${x(process.execPath)}</string><string>${x(ROOT)}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict></plist>
+`);
+}
+
 function buildTray() {
   const def = charById(config.defaultCharacter) || characters[0];
-  const img = def?.spriteData ? spriteImage(def.spriteData, 18, { rounded: false }) : nativeImage.createEmpty();
+  // No characters yet (first run): the app icon, so the menu-bar item is still there to click.
+  const img = def?.spriteData ? spriteImage(def.spriteData, 18, { rounded: false }) : nativeImage.createFromPath(path.join(ROOT, "build", "icon.png")).resize({ width: 18, height: 18, quality: "best" });
   tray = new Tray(img);
   tray.setToolTip("Pi Desktop");
-  const login = app.getLoginItemSettings().openAtLogin;
+  const login = loginOn();
   const menu = Menu.buildFromTemplate([
     { label: "Show", accelerator: config.hotkey, click: showWindow },
     { type: "separator" },
     ...characters.filter((c) => c.custom).map((c) => ({ label: c.name, click: () => { showWindow(); send("app:focus-character", c.id); } })),
     { type: "separator" },
-    { label: "Open at login", type: "checkbox", checked: login, click: (m) => app.setLoginItemSettings({ openAtLogin: m.checked }) },
+    { label: "Open at login", type: "checkbox", checked: login, click: (m) => setLogin(m.checked) },
     { label: "Quit", accelerator: "Cmd+Q", click: () => app.quit() },
   ]);
   tray.setContextMenu(menu);
@@ -694,7 +683,7 @@ function createWindow() {
     titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 18 },
     vibrancy: "sidebar", visualEffectState: "active", backgroundColor: "#00000000",
     show: false,
-    webPreferences: { preload: path.join(ROOT, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: false },
+    webPreferences: { preload: path.join(ROOT, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.loadFile(path.join(ROOT, "app/index.html"));
   // A test profile (PIDESK_PROFILE) never shows its window, so automated runs can't be disturbed by stray clicks.
@@ -704,7 +693,7 @@ function createWindow() {
   win.on("resize", saveState); win.on("move", saveState);
   win.on("close", (e) => { if (!app.isQuitting) { e.preventDefault(); win.hide(); } });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); return { action: "deny" }; });
-  win.webContents.on("will-navigate", (e, url) => { if (!url.startsWith("file://") || !url.endsWith("app/index.html")) { e.preventDefault(); if (/^https?:\/\//.test(url)) shell.openExternal(url); } });
+  win.webContents.on("will-navigate", (e, url) => { if (url.split(/[?#]/)[0] !== INDEX_URL) { e.preventDefault(); if (/^https?:\/\//.test(url)) shell.openExternal(url); } });
 }
 
 
@@ -757,7 +746,43 @@ function buildMenu() {
   ]));
 }
 
+const whisperModelPath = () => { const p = expand(config.whisperModel); return path.isAbsolute(p) ? p : path.join(ROOT, p); };
+
+// ---------- first run: no harnesses yet ----------
+// Where `pi` resolves on the PATH harness scripts get (null = not installed, or not on that PATH).
+function findPi() {
+  try { return execFileSync("/bin/sh", ["-c", "command -v pi"], { env: ENV, encoding: "utf8", timeout: 5000 }).trim() || null; }
+  catch { return null; }
+}
+function setupStatus() {
+  const bin = expand(config.harnessDir || "~/bin");
+  return { harnessDir: bin.replace(HOME, "~"), harnessDirExists: fs.existsSync(bin), pi: findPi(), characters: characters.length, repo: ROOT.replace(HOME, "~") };
+}
+// Copies examples/bin/pi-* into the harness folder (never overwrites), pointing their terminal face at this checkout.
+function addExamples() {
+  const bin = expand(config.harnessDir || "~/bin"), src = path.join(ROOT, "examples", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const here = ROOT.replace(/["$`\\]/g, "\\$&");
+  return fs.readdirSync(src).filter((f) => f.startsWith("pi-")).map((f) => {
+    const dest = path.join(bin, f);
+    if (fs.existsSync(dest)) return { file: dest, kept: true };
+    const body = fs.readFileSync(path.join(src, f), "utf8").replace("${PI_DESKTOP_DIR:-$HOME/pi-desktop}", `\${PI_DESKTOP_DIR:-${here}}`);
+    fs.writeFileSync(dest, body, { mode: 0o755 });
+    return { file: dest, kept: false };
+  });
+}
+// Re-reads the harness folder and character files, then restarts the page (and the menu-bar list).
+function reloadCharacters() {
+  loadCharacters();
+  if (tray) { tray.destroy(); tray = null; buildTray(); }
+  applyCharacterChrome(config.defaultCharacter);
+  win?.reload();
+}
+
 // ---------- IPC ----------
+ipcMain.handle("setup:status", () => setupStatus());
+ipcMain.handle("setup:add-examples", () => { try { return { added: addExamples() }; } catch (e) { return { error: String(e.message || e) }; } });
+ipcMain.handle("setup:reload", () => { reloadCharacters(); return true; });
 ipcMain.handle("app:init", () => ({
   characters: characters.map(({ quoteList, ...c }) => ({ ...c, quoteList })),
   defaultCharacter: config.defaultCharacter,
@@ -768,7 +793,15 @@ ipcMain.handle("app:init", () => ({
   charDir: CHAR_DIR.replace(HOME, "~") + "/",
   home: HOME,
 }));
-ipcMain.handle("pi:cmd", (_e, id, cmd) => rpc(id, cmd));
+ipcMain.handle("pi:cmd", (_e, id, cmd) => {
+  if (!core.pageRpcAllowed(cmd)) return { success: false, error: `Not allowed from the window: ${String(cmd?.type).slice(0, 40)}` };
+  if (cmd.type === "export_html") {
+    const out = path.resolve(expand(String(cmd.outputPath || "")));
+    if (!core.exportPathAllowed(out, HOME)) return { success: false, error: "Export goes to an .html file in Downloads." };
+    cmd = { ...cmd, outputPath: out };
+  }
+  return rpc(id, cmd);
+});
 ipcMain.handle("pi:ensure", async (_e, key, harness, sessionFile) => {
   // Another chat already has this file running: share its process instead of starting a second writer.
   const other = !procs.has(key) && procForFile(sessionFile, key);
@@ -780,7 +813,7 @@ ipcMain.handle("pi:ensure", async (_e, key, harness, sessionFile) => {
 ipcMain.handle("pi:close", (_e, key, opts) => { const p = procs.get(key); if (p && opts?.reap && holding(p)) return { kept: true }; /* the idle reaper never closes a chat that is working or waiting on a background job */ if (p) { p.closing = true; p.closeReason = opts?.reap ? "idle-reaper" : "closed-by-you"; try { p.child.stdin.end(); } catch {} setTimeout(() => { if (!p.child.killed && procs.get(key) === p) p.child.kill(); }, 5000); } return true; });
 ipcMain.handle("pi:running", () => [...procs.entries()].map(([id, p]) => ({ id, harness: p.harness, busy: p.busy })));
 ipcMain.handle("pi:restart", (_e, id) => { procs.get(id)?.child.kill(); return true; });
-ipcMain.on("pi:ui-response", (_e, id, resp) => { try { procs.get(id)?.child.stdin.write(JSON.stringify(resp) + "\n"); } catch {} });
+ipcMain.on("pi:ui-response", (_e, id, resp) => { if (resp?.type !== "extension_ui_response" || typeof resp.id !== "string") return; try { procs.get(id)?.child.stdin.write(JSON.stringify(resp) + "\n"); } catch {} });
 ipcMain.handle("tasks:list", () => publicTasks());
 ipcMain.handle("tasks:save", (_e, t) => {
   const i = tasks.findIndex((x) => x.id === t.id);
@@ -825,10 +858,16 @@ ipcMain.handle("usage:bump", (_e, id) => {
 ipcMain.handle("sound:preview", (_e, harness) => { announce(harness, { preview: true }); return true; });
 ipcMain.handle("threads:meta", (_e, file, patch) => setThreadMeta(file, patch));
 ipcMain.handle("threads:trash", async (_e, file) => { try { return await trashThread(file); } catch (e) { return { error: String(e.message || e) }; } });
-ipcMain.handle("app:config", () => ({ ...config, userName: userName(), openAtLogin: app.getLoginItemSettings().openAtLogin }));
+ipcMain.handle("app:config", () => ({ ...config, userName: userName(), openAtLogin: loginOn() }));
+// Only what the Settings sheet edits, type-checked. (harnessDir decides which scripts run, and memory.url where data
+// goes: those stay in config.json, edited by you, never by the page.)
+const SETTINGS = { userName: "string", hotkey: "string", notifyWhenHidden: "boolean", showThinking: "boolean", finishSound: "boolean", finishVoice: "boolean" };
 ipcMain.handle("app:save-config", (_e, patch) => {
-  const { openAtLogin, ...rest } = patch;
-  if (openAtLogin != null) app.setLoginItemSettings({ openAtLogin: !!openAtLogin });
+  const { openAtLogin, modelProviders, ...given } = patch && typeof patch === "object" ? patch : {};
+  const rest = {};
+  for (const [k, v] of Object.entries(given)) if (typeof v === SETTINGS[k]) rest[k] = k === "userName" ? v.slice(0, 60) : v;
+  if (Array.isArray(modelProviders)) rest.modelProviders = modelProviders.filter((x) => typeof x === "string" && /^[\w.-]{1,60}$/.test(x)).slice(0, 30);
+  if (openAtLogin != null) setLogin(!!openAtLogin);
   if (rest.hotkey && rest.hotkey !== config.hotkey) {
     globalShortcut.unregister(config.hotkey);
     const ok = globalShortcut.register(rest.hotkey, () => (win && win.isVisible() && win.isFocused() ? win.hide() : showWindow()));
@@ -850,12 +889,12 @@ ipcMain.handle("fs:read-image", (_e, p) => {
   return { type: "image", mimeType: mime, data: fs.readFileSync(p).toString("base64") };
 });
 ipcMain.handle("app:open-export", (_e, p) => {
-  const f = safePath(p), dl = path.join(HOME, "Downloads") + path.sep;
-  if (!f || !f.endsWith(".html") || !(f.startsWith(dl) || /^\/(private\/)?tmp\//.test(f))) return "Not allowed";
+  const f = safePath(p);
+  if (!f || !core.exportPathAllowed(f, HOME)) return "Not allowed";
   return shell.openPath(f);
 });
 ipcMain.handle("sessions:list", (_e, id) => listSessions(id));
-ipcMain.handle("learn:topics", (_e, root) => { watchLessons(root); return learningTopics(root); });
+ipcMain.handle("learn:topics", (_e, root) => { const r = safePath(root || "~/learning"); if (!r) return []; watchLessons(r); return learningTopics(r); });
 ipcMain.handle("learn:topic", (_e, dir) => { const d = safePath(dir); return d ? topicDetail(d) : null; });
 ipcMain.handle("fs:read", (_e, p) => { const f = safePath(p); if (!f) return null; try { return fs.readFileSync(f, "utf8"); } catch { return null; } });
 ipcMain.handle("fs:list", (_e, dir) => {
@@ -867,7 +906,16 @@ ipcMain.handle("fs:list", (_e, dir) => {
   } catch { return []; }
 });
 ipcMain.handle("fs:reveal", (_e, p) => { const f = safePath(p); if (f) shell.showItemInFolder(f); });
-ipcMain.handle("fs:open", (_e, p) => { const f = safePath(p); return f ? shell.openPath(f) : "Not allowed"; });
+// "Open" hands a file to macOS, which runs some kinds (an .app, a .command script, an executable). A link in a model's
+// reply could point at one, so those are shown in Finder instead: running it stays a deliberate double-click.
+ipcMain.handle("fs:open", (_e, p) => {
+  const f = safePath(p);
+  if (!f) return "Not allowed";
+  let exec = false; try { const st = fs.statSync(f); exec = st.isFile() && !!(st.mode & 0o111); } catch {}
+  if (core.LAUNCHES.test(f) || exec) { shell.showItemInFolder(f); return "That file can run code, so it's shown in Finder instead."; }
+  return shell.openPath(f);
+});
+ipcMain.handle("fs:allowed", (_e, p) => !!safePath(p));
 ipcMain.handle("voice:transcribe", (_e, bytes, before) => transcribe(bytes, before));
 ipcMain.handle("voice:warm", () => asr().warm());
 ipcMain.handle("voice:permission", async () => (process.platform === "darwin" ? systemPreferences.askForMediaAccess("microphone") : true));
@@ -881,7 +929,8 @@ const iconArg = process.argv.find((a) => a.startsWith("--write-icon="));
 if (iconArg) {
   app.whenReady().then(() => {
     loadCharacters();
-    const ch = charById(config.defaultCharacter);
+    const ch = charById(config.defaultCharacter) || characters[0];
+    if (!ch) { console.error("--write-icon: no characters found"); return app.exit(1); }
     const img = (ch.icon && imageTile(ch.icon, 1024)) || spriteImage(ch.spriteData, 1024);
     fs.writeFileSync(iconArg.split("=")[1], img.toPNG());
     app.exit(0);
@@ -895,7 +944,9 @@ app.on("second-instance", (_e, argv) => { showWindow(); const id = charArg(argv)
 if (!iconArg) app.whenReady().then(() => {
   nativeTheme.themeSource = "dark";
   buildMenu();
-  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(perm === "media" || perm === "clipboard-sanitized-write"));
+  // Microphone (voice typing) and copy only, and only for the app's own page: never for a lesson or preview frame.
+  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb, details) =>
+    cb((perm === "media" || perm === "clipboard-sanitized-write") && details?.isMainFrame !== false && String(details?.requestingUrl || INDEX_URL).split(/[?#]/)[0] === INDEX_URL));
   loadCharacters();
   createWindow();
   buildTray();

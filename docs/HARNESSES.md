@@ -10,7 +10,8 @@ On launch the app lists `<harnessDir>/pi-*` (default `~/bin`, set `harnessDir` i
 
 - `pi-research` → character id `research`.
 - Line 2 of the script (`# pi-research: Research with sources. ...`) becomes the default tagline.
-- The first `cd "$HOME/..."` line sets the character's working folder. That folder decides which Pi session folder
+- The first `cd` line to `"$HOME/..."`, `~/...` or an absolute path (`cd "/Volumes/Work/site"`) sets the character's
+  working folder. A `cd` to a variable or a relative path isn't followed: set `"cwd"` in the character file instead. That folder decides which Pi session folder
   holds its chats (`~/.pi/agent/sessions/--<folder>--/`), so **give each harness its own folder** if you want separate chat lists.
 - A script that is only a one-line alias (`exec ".../pi-other" "$@"`) is skipped, so aliases don't show up twice.
 - `pi-ls` is ignored.
