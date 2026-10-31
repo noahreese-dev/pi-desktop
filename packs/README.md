@@ -4,6 +4,8 @@ Five ready-made characters for Pi Desktop, each a complete harness: a `pi-<id>` 
 accent, greeting, suggestions, finish line, persona), its own skills, and a workspace with rules. They run on a
 default Pi install with whatever provider and model you already use, in Pi Desktop and in the terminal.
 
+<img src="switcher.png" alt="The five characters in Pi Desktop's switcher" width="420">
+
 | id | Name | Role | Skills |
 |---|---|---|---|
 | `engineer` | Andrej | Senior engineer: grill → spec → tickets → parallel → validate | `engineer` |
@@ -28,7 +30,8 @@ For each character this writes:
 - `characters/<id>/`: the pixel face (needs Python 3 + Pillow; without it the app shows a letter avatar, and
   `pip3 install pillow && npm run faces` fixes it later).
 
-Existing files are never overwritten unless you pass `--force`. Restart Pi Desktop to see the characters.
+Existing files are never overwritten unless you pass `--force`. Restart Pi Desktop (or press Reload on its welcome
+screen) to see the characters.
 In a terminal, run `pi-ai`, `pi-history`, ... (with `~/bin` on your `PATH`).
 
 ## Uninstall

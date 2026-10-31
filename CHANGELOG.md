@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 (2026-10-31)
+
+- **Character pack** (`packs/`, `scripts/install-pack.sh all`): Andrej (engineer: grill, spec, tickets, worktrees,
+  receipts), Ilya (AI research), History (historian, historical-critical method), Ali (learning coach with the
+  Learning panel) and Narges (artist, image refinement loop). Each has its own skills and workspace and works with
+  any Pi provider.
+- **First run:** a welcome screen instead of a blank window when no characters exist, with one-click example
+  characters; plain-English errors when Pi is missing; `npm run doctor`.
+- **Security:** the page may only send allow-listed Pi RPC commands and settings; strict CSP (no remote images or
+  network from the page); sanitized model markdown; renderer sandbox; wider secret-file blocklist; "Open" never
+  launches apps or scripts. See docs/ARCHITECTURE.md#security-model.
+- **Fixes:** weekly tasks on Sunday ran on Monday; a harness `cd` to an absolute path was ignored; "Open at login"
+  from source launched bare Electron (now a LaunchAgent); voice typing could kill an unrelated process on its port.
+- **For contributors:** AGENTS.md, offline unit tests (`npm test`), `npm run check`, code of conduct.
+
 ## 0.1.0 (2026-10-30)
 
 First public release.
