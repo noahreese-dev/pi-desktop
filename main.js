@@ -146,7 +146,7 @@ function startPi(key, harness, sessionFile) {
   if (!ch.remote && sessionFile && isHarnessSession(sessionFile) && fs.existsSync(sessionFile)) args.push("--session", sessionFile);
   if (ch.persona) args.push("--append-system-prompt", ch.persona);
   const child = ch.remote
-    ? spawn(...remoteLib.piCommand(ch.remote, args, "/tmp", resumeName), { env: { ...ENV, PI_DESKTOP: "1" }, stdio: ["pipe", "pipe", "pipe"] })
+    ? spawn(...remoteLib.piCommand(ch.remote, args, sshDir(), resumeName), { env: { ...ENV, PI_DESKTOP: "1" }, stdio: ["pipe", "pipe", "pipe"] })
     : spawn(...core.launchCommand(config.launchPrefix, ch.script, args), { cwd: spawnCwd(ch), env: { ...ENV, PI_DESKTOP: "1" }, stdio: ["pipe", "pipe", "pipe"] });
   const p = { child, harness, buf: "", pending: new Map(), seq: 0, busy: false, bg: false, lastActive: Date.now(), stderr: "", startedAt: Date.now() };
   child.stdout.setEncoding("utf8");
@@ -571,7 +571,7 @@ function runTask(id) {
   const started = Date.now(), title = `⏰ ${t.name}`;
   const targs = ["-p", core.promptArg(t.prompt), "--name", title];
   const child = ch.remote
-    ? spawn(...remoteLib.piCommand(ch.remote, targs, "/tmp"), { env: { ...ENV, PI_DESKTOP_TASK: t.id }, stdio: ["ignore", "pipe", "pipe"] })
+    ? spawn(...remoteLib.piCommand(ch.remote, targs, sshDir()), { env: { ...ENV, PI_DESKTOP_TASK: t.id }, stdio: ["ignore", "pipe", "pipe"] })
     : spawn(...core.launchCommand(config.launchPrefix, ch.script, targs), { cwd: spawnCwd(ch), env: { ...ENV, PI_DESKTOP_TASK: t.id }, stdio: ["ignore", "pipe", "pipe"] });
   let out = "", err = "";
   child.stdout.on("data", (d) => { out = (out + d).slice(-20000); });
@@ -829,6 +829,8 @@ function reloadCharacters() {
 // ---------- servers (remote Pi over ssh) ----------
 // Saved in remotes.json: [{ id, name, target, folder }]. The page can only add/remove entries through the validated calls below.
 const REMOTES_PATH = path.join(DATA_DIR, "remotes.json");
+// ssh connection-sharing sockets live in a folder only you can open (not the shared /tmp). Short path: macOS caps socket paths at 104 bytes.
+const sshDir = () => { const d = path.join(HOME, ".ssh", "pidesk"); try { fs.mkdirSync(d, { recursive: true, mode: 0o700 }); fs.chmodSync(d, 0o700); } catch {} return d; };
 const loadRemotes = () => { const r = readJSON(REMOTES_PATH, []); return Array.isArray(r) ? r.filter((x) => x && /^srv-[a-z0-9-]+$/.test(x.id) && remoteLib.cleanTarget(x.target)).map((x) => ({ ...x, harnesses: (Array.isArray(x.harnesses) ? x.harnesses : []).filter((h) => h && /^[a-z0-9-]{1,30}$/.test(String(h.name).toLowerCase()) && /^\/[\w./-]+$/.test(String(h.script))).map((h) => ({ ...h, name: String(h.name).toLowerCase(), folder: remoteLib.cleanFolder(h.folder) ? h.folder : "~" })) })) : []; };
 const saveRemotes = (list) => fs.writeFileSync(REMOTES_PATH, JSON.stringify(list, null, 2) + "\n");
 const publicRemotes = () => loadRemotes().map((r) => ({ ...r, agents: (r.harnesses || []).length }));
@@ -846,13 +848,19 @@ function runSsh([cmd, args], timeout = 25000) {
 async function testRemote(given) {
   const r = remoteInput(given);
   if (!r) return { ok: false, reached: false, problem: "That address doesn't look right. Try something like me@my-server.com or the name from your SSH config." };
-  const res = remoteLib.explain(await runSsh(remoteLib.testCommand(r, "/tmp")), r.target);
+  const res = remoteLib.explain(await runSsh(remoteLib.testCommand(r, sshDir())), r.target);
   return { ...res, target: r.target };
+}
+// The window can show model output, so anything that changes what agents run or follow is confirmed in a native dialog the page can't click.
+async function confirmNative(message, detail, button) {
+  const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, { type: "question", buttons: ["Cancel", button], defaultId: 0, cancelId: 0, message, detail });
+  return r.response === 1;
 }
 async function installPiRemote(given) {
   const r = remoteInput(given);
   if (!r) return { ok: false };
-  const res = await runSsh(remoteLib.installCommand(r, "/tmp"), 5 * 60e3);
+  if (!(await confirmNative(`Install Pi on ${r.target}?`, "This runs on that server:\n\nnpm install -g @earendil-works/pi-coding-agent", "Install"))) return { ok: false, cancelled: true };
+  const res = await runSsh(remoteLib.installCommand(r, sshDir()), 5 * 60e3);
   return { ...(await testRemote(given)), installLog: (res.stdout + res.stderr).slice(-300) };
 }
 function keySetup(given) {
@@ -865,7 +873,7 @@ function keySetup(given) {
   return { ok: true };
 }
 async function discoverRemote(r) {
-  const res = await runSsh(remoteLib.discoverCommand(r, "/tmp"), 20000);
+  const res = await runSsh(remoteLib.discoverCommand(r, sshDir()), 20000);
   return res.code === 0 ? remoteLib.parseDiscovered(res.stdout, core.parseHarness) : null;
 }
 async function refreshRemote(id) {
@@ -911,7 +919,7 @@ const MCP_NAME = /^[A-Za-z0-9_-]{1,40}$/;
 const mcpRemote = (target) => { if (!target) return null; const c = charById(String(target)); return c?.remote ? c.remote : false; };
 function sshPipe(remote, inner, input, timeout = 30000) {
   return new Promise((resolve) => {
-    const [cmd, args] = remoteLib.shellCommand(remote, inner, "/tmp");
+    const [cmd, args] = remoteLib.shellCommand(remote, inner, sshDir());
     const c = spawn(cmd, args, { env: ENV, stdio: ["pipe", "pipe", "pipe"] });
     let out = "", err = "";
     const t = setTimeout(() => { try { c.kill(); } catch {} }, timeout);
@@ -1109,6 +1117,7 @@ async function skillCreate(given, target) {
   if (!String(given?.description || "").trim()) return { error: "Say when Pi should use it. That's how it decides." };
   if (!String(given?.instructions || "").trim()) return { error: "Add the instructions." };
   const text = skillLib.skillFile({ name, description: given.description, instructions: given.instructions });
+  if (!(await confirmNative(`Add the skill “${name}”?`, `Every agent ${rem ? "on " + rem.target.split("@").pop() : "on this Mac"} can load it and follow its instructions.\n\nWhen to use it: ${String(given.description).replace(/\s+/g, " ").trim().slice(0, 300)}`, "Add skill"))) return { cancelled: true };
   try {
     if (!rem) {
       const dir = path.join(HOME, ".agents/skills", name);
@@ -1154,6 +1163,8 @@ async function instrSave(id, scope, content) {
   try {
     const f = (await instrScan(ch))[scope];
     if (!/^\/[\w./ @+-]+$/.test(f.path) || /\.\./.test(f.path)) return { error: "Can't save to that location." };
+    const who = scope === "global" ? "every agent" : `${ch.name || ch.id}`;
+    if (!(await confirmNative(`Save instructions for ${who}?`, `${f.path}\n\n${scope === "global" ? "Every agent reads this file at the start of each chat." : "This agent reads this file at the start of each chat."}`, "Save"))) return { cancelled: true };
     const text = content.replace(/\r\n/g, "\n");
     if (!ch.remote) {
       fs.mkdirSync(path.dirname(f.path), { recursive: true });
@@ -1165,55 +1176,6 @@ async function instrSave(id, scope, content) {
     }
     return { ok: true, path: f.path };
   } catch (e) { return { error: e.message }; }
-}
-
-// ---------- connector logos from svgl.app (fallback after the built-in set) ----------
-// Only the connector's name / web host is sent to api.svgl.app. Results (and misses) are cached on disk, so each is asked once.
-const ICON_DIR = path.join(DATA_DIR, "icon-cache");
-const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
-function iconCandidates(name, where) {
-  const out = new Set();
-  const n = String(name).toLowerCase().replace(/(^mcp[-_]|[-_]mcp$|[-_]server$)/g, "");
-  out.add(n);
-  for (const part of n.split(/[-_]/)) if (part.length > 3) out.add(part);
-  const labels = String(where || "").toLowerCase().split(".").filter((l) => l && !["mcp", "api", "www", "app", "com", "io", "dev", "ai", "co", "net", "org", "mail"].includes(l));
-  labels.forEach((l) => out.add(l));
-  return [...out].map(norm).filter((x) => x.length >= 3 && x.length <= 30);
-}
-function safeSvg(text) {
-  if (typeof text !== "string" || text.length > 150000 || !/^\s*(<\?xml[^>]*>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(text)) return null;
-  if (/<script|<foreignObject|<iframe|<image|\son[a-z]+\s*=|javascript:|<!ENTITY|<style[^>]*@import|href\s*=\s*["']https?:/i.test(text)) return null;
-  return text;
-}
-// The whole svgl catalog (about 130 KB), fetched at most once a day and matched locally by name.
-let svglCatalog = null;
-async function svglList() {
-  const f = path.join(ICON_DIR, "catalog.json");
-  if (svglCatalog) return svglCatalog;
-  try { if (Date.now() - fs.statSync(f).mtimeMs < 864e5) return (svglCatalog = JSON.parse(fs.readFileSync(f, "utf8"))); } catch {}
-  try {
-    const res = await fetch("https://api.svgl.app", { signal: AbortSignal.timeout(15000) });
-    const list = res.ok ? await res.json() : null;
-    if (Array.isArray(list)) { fs.writeFileSync(f, JSON.stringify(list.map((x) => ({ title: x.title, route: x.route })))); return (svglCatalog = list); }
-  } catch {}
-  try { return (svglCatalog = JSON.parse(fs.readFileSync(f, "utf8"))); } catch { return null; } // stale copy beats nothing
-}
-async function iconFor(name, where) {
-  fs.mkdirSync(ICON_DIR, { recursive: true });
-  const cands = iconCandidates(name, where);
-  for (const c of cands) { try { return "data:image/svg+xml;base64," + fs.readFileSync(path.join(ICON_DIR, c + ".svg")).toString("base64"); } catch {} }
-  const list = await svglList(); if (!list) return null; // offline: try again next time
-  for (const c of cands) {
-    const hit = list.find((x) => norm(x.title) === c); // exact title only, so "cal" never gets "Scala"
-    if (!hit) continue;
-    const route = typeof hit.route === "string" ? hit.route : hit.route?.dark || hit.route?.light; // this window is dark
-    if (typeof route !== "string" || !/^https:\/\/svgl\.app\/[\w./-]+\.svg$/.test(route) || route.includes("..")) continue;
-    try {
-      const svg = safeSvg(await (await fetch(route, { signal: AbortSignal.timeout(8000) })).text());
-      if (svg) { fs.writeFileSync(path.join(ICON_DIR, c + ".svg"), svg); return "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64"); }
-    } catch {}
-  }
-  return null;
 }
 
 // ---------- creating agents (a start script + a look + an instruction file) ----------
@@ -1366,7 +1328,6 @@ ipcMain.handle("skills:delete", async (_e, d, t) => {
 });
 ipcMain.handle("instr:get", (_e, id) => instrGet(id));
 ipcMain.handle("instr:save", (_e, id, scope, content) => instrSave(id, scope, content));
-ipcMain.handle("icon:for", (_e, name, where) => (typeof name === "string" && name.length < 80 ? iconFor(name, String(where || "").slice(0, 120)) : null));
 // Folder choosing for the New agent form. The window only ever gets back a path relative to the home folder, already validated.
 ipcMain.handle("agents:pick-folder", async () => {
   const r = await dialog.showOpenDialog(win && !win.isDestroyed() ? win : undefined, { defaultPath: HOME, properties: ["openDirectory", "createDirectory"], message: "Choose the folder this agent starts in", buttonLabel: "Choose folder" });
@@ -1533,7 +1494,7 @@ function syncRemote(id) {
   let since = 0;
   try { for (const f of fs.readdirSync(dir)) since = Math.max(since, Math.floor(fs.statSync(path.join(dir, f)).mtimeMs / 1000) - 1); } catch {}
   const p = new Promise((resolve) => {
-    const [cmd, args] = remoteLib.pullCommand(ch.remote, since, "/tmp");
+    const [cmd, args] = remoteLib.pullCommand(ch.remote, since, sshDir());
     const ssh = spawn(cmd, args, { env: ENV, stdio: ["ignore", "pipe", "ignore"] });
     const tar = spawn("/usr/bin/tar", ["-xf", "-", "-C", dir], { stdio: ["pipe", "ignore", "ignore"] });
     ssh.stdout.pipe(tar.stdin);

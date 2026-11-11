@@ -26,3 +26,8 @@ test("errors become plain sentences", () => {
   assert.equal(r.explain({ code: 0, stdout: "PIDESK_OK\nPIDESK_NOPI\nPIDESK_NPM" }, "x").fix, "install");
 });
 test("ssh config hosts", () => assert.deepEqual(r.sshConfigHosts("Host a b\nHost *\nHost c?\n"), ["a", "b"]));
+
+test("sshOptions: control sockets need a private folder (no shared /tmp default)", () => {
+  assert.throws(() => r.sshOptions());
+  assert.ok(r.sshOptions("/x/.ssh/pidesk").includes("ControlPath=/x/.ssh/pidesk/pidesk-%C"));
+});

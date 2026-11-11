@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Confirmed in a native dialog:** saving an AGENTS.md (folder or global), adding a skill, and installing Pi on a server,
+  same as adding a connector or creating an agent. The page shows model output, so it can't approve these on its own.
+- **ssh sockets in a private folder:** connection sharing uses `~/.ssh/pidesk` (only you can open it) instead of `/tmp`.
+- **Connector logos are bundled only:** no lookups on the internet; unknown connectors get the generic icon.
 - **No more pop-ups:** forms (Settings, New agent, Connect a server, Add connector, Add skill and the rest) open as a page
   in the main area with a Back arrow, and confirmations ("Delete chat?") are an inline card above the message box.
   Kept as system dialogs on purpose: confirmations that guard something an agent could trigger (adding a connector,
@@ -26,7 +30,7 @@
   after it stay visible too. Settings → "Show every step" (`showWork`) turns the old full list back on.
 - **Questions show inline:** when an agent offers choices, they appear as a card above the composer instead of a
   pop-up. Descriptions are cut to one short line (hover for the full text), the option marked "(Recommended)" is
-  highlighted, and number keys still pick. Yes/No and text-entry prompts keep their pop-up.
+  highlighted, and number keys still pick.
 - **`launchPrefix` setting:** start every agent through a command of your choice (for example a key proxy or sandbox),
   so the app can run Pi the same way your terminal does. Leave it empty to change nothing.
 

@@ -18,7 +18,6 @@ contextBridge.exposeInMainWorld("desk", {
   skillDelete: (d, t) => ipcRenderer.invoke("skills:delete", d, t),
   instrGet: (id) => ipcRenderer.invoke("instr:get", id),
   instrSave: (id, scope, content) => ipcRenderer.invoke("instr:save", id, scope, content),
-  iconFor: (n, w) => ipcRenderer.invoke("icon:for", n, w),
   agentPickFolder: () => ipcRenderer.invoke("agents:pick-folder"),
   agentListDirs: (t, rel) => ipcRenderer.invoke("agents:list-dirs", t, rel),
   agentModels: () => ipcRenderer.invoke("agents:models"),

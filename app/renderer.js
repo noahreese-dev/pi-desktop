@@ -1695,16 +1695,9 @@ function regenerate() {
 const BRAND_ALIAS = { "hostinger-email": "hostinger", "hostinger_email": "hostinger", gcal: "googlecalendar", "google-calendar": "googlecalendar", gdrive: "googledrive", "google-drive": "googledrive", "github-integration": "github", postgres: "postgresql", "mcp.linear.app": "linear", "mcp.notion.com": "notion", "mcp.sentry.dev": "sentry", "mcp.stripe.com": "stripe", "mcp.figma.com": "figma", "mcp.vercel.com": "vercel", "mcp.mail.hostinger.com": "hostinger" };
 const brandOf = (c) => { const B = window.BRANDS || {}, n = c.name.toLowerCase(); const k = BRAND_ALIAS[n] || (B[n] ? n : null) || BRAND_ALIAS[c.where] || Object.keys(B).find((s) => s.length > 3 && (n.includes(s) || c.where.toLowerCase().includes(s))); return k && B[k] ? B[k] : null; };
 const brandIcon = (c) => { const b = brandOf(c); if (!b) return null; const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("class", "brand"); const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", b.p); p.setAttribute("fill", b.c.toLowerCase() === "#000000" || parseInt(b.c.slice(1), 16) < 0x303030 ? "#f5f5f5" : b.c); s.append(p); return s; };
-// Built-in mark first (instant), then svgl.app (fetched once, cached), else the generic icon.
-const iconCache = {};
+// Built-in mark (bundled, nothing fetched), else the generic icon.
 function connectorIcon(c) {
-  const ico = h("span", { class: "cn-ico", style: `color:${hue(c.name)}` }, brandIcon(c) || svg(CN_ICON[c.kind]));
-  if (!brandOf(c)) {
-    const show = (url) => { if (url) ico.replaceChildren(h("img", { src: url, draggable: "false" })); };
-    if (c.name in iconCache) show(iconCache[c.name]);
-    else desk.iconFor(c.name, c.where).then((u) => { iconCache[c.name] = u; show(u); });
-  }
-  return ico;
+  return h("span", { class: "cn-ico", style: `color:${hue(c.name)}` }, brandIcon(c) || svg(CN_ICON[c.kind]));
 }
 const CN_ICON = { web: '<circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2.4 2.2 2.4 11.8 0 14M10 3c-2.4 2.2-2.4 11.8 0 14"/>', desktop: '<rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 17h6M10 14v3"/>' };
 // An isolated agent (character file `isolated: true`) loads only its own skills and the connectors it names in `mcp`, so the
