@@ -1,14 +1,17 @@
 {
   "userName": "",
   "harnessDir": "~/bin",
+  "agentsDir": "~/Documents/Pi Desktop",
   "defaultCharacter": "base",
   "hotkey": "Alt+Shift+Space",
   "whisperModel": "models/ggml-small.en-q5_1.bin",
   "notifyWhenHidden": true,
   "showThinking": true,
+  "showWork": false,
   "finishSound": true,
   "finishVoice": true,
   "finishVolume": 0.8,
+  "launchPrefix": [],
   "modelProviders": [],
   "memory": null
 }

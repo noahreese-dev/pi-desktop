@@ -172,3 +172,69 @@ test("tasksFromDisk: outside edits reload; the app's own write, broken JSON and 
   assert.deepEqual(core.tasksFromDisk('[{"id": "a"}, {"id": "b", "name": "B"}]', mine), [{ id: "a" }, { id: "b", name: "B" }]);
   assert.deepEqual(core.tasksFromDisk('[{"id": "a"}, {"name": "no id"}, null, "x", {"id": ""}]', mine), [{ id: "a" }]);
 });
+
+test("launchCommand: no prefix runs the script directly; a prefix goes in front; junk is ignored", () => {
+  const { launchCommand } = core;
+  assert.deepEqual(launchCommand([], "/bin/pi-x", ["--mode", "rpc"]), ["/bin/pi-x", ["--mode", "rpc"]]);
+  assert.deepEqual(launchCommand(["av", "run", "m", "--"], "/bin/pi-x", ["-p", "hi"]), ["av", ["run", "m", "--", "/bin/pi-x", "-p", "hi"]]);
+  for (const bad of [undefined, null, "av run", [""], [1], {}]) assert.deepEqual(launchCommand(bad, "/s", ["a"]), ["/s", ["a"]]);
+});
+
+test("agentSkillRepo: names the pinned repo a skill came from; own skills have none; non-skill folders are not skills", () => {
+  const skills = require("../lib/skills.js");
+  assert.equal(skills.agentSkillRepo("/h/pi-gtm/vendor/marketingskills/skills/seo-audit"), "marketingskills");
+  assert.equal(skills.agentSkillRepo("/h/pi-x/vendor/repo/nested/skills/foo"), "repo");
+  assert.equal(skills.agentSkillRepo("/h/pi-x/skills/mine"), "");
+  assert.equal(skills.inSkillsFolder("/h/pi-x/skills/mine"), true);
+  assert.equal(skills.inSkillsFolder("/h/pi-x/vendor/repo/examples/template"), false);
+});
+
+test("cliList: keeps plain binary names, takes strings or { name, use }, drops junk and duplicates", () => {
+  assert.deepEqual(core.cliList(["gh", { name: "vercel", use: "deploys" }, "gh", "rm -rf /", "a;b", "", 5, null, { use: "x" }, "-x"]),
+    [{ name: "gh", use: "" }, { name: "vercel", use: "deploys" }]);
+  assert.deepEqual(core.cliList(undefined), []);
+  assert.equal(core.cliList(Array.from({ length: 80 }, (_, i) => "t" + i)).length, 40);
+});
+
+test("cliRank: search by name or by what a tool does, browse only your own described tools, system tools by name only", () => {
+  const E = [{ name: "bird", desc: "Post and read X (Twitter) from the terminal", source: "Yours" }, { name: "rg", desc: "Search tool like grep", source: "Homebrew" },
+    { name: "pdftotext", desc: "Convert PDF to text", source: "Homebrew" }, { name: "ls", desc: "", source: "System" }, { name: "nodesc", desc: "", source: "Other" }, { name: "rm -rf", desc: "x", source: "Yours" }];
+  assert.deepEqual(core.cliRank(E, "twitter").map((x) => x.name), ["bird"]);
+  assert.deepEqual(core.cliRank(E, "pdf text").map((x) => x.name), ["pdftotext"]);
+  assert.deepEqual(core.cliRank(E, "").map((x) => x.name), ["bird", "pdftotext", "rg"]);   // yours first; no system, no undescribed, no junk names
+  assert.deepEqual(core.cliRank(E, "ls").map((x) => x.name), ["ls"]);                       // a system tool, found by its name
+  assert.deepEqual(core.cliRank(E, "", ["bird"]).map((x) => x.name), ["pdftotext", "rg"]);   // already on the agent's list
+  const many = Array.from({ length: 300 }, (_, i) => ({ name: "tool" + i, desc: "does thing " + i, source: "Homebrew" }));   // not capped at the 40 an agent may list
+  assert.equal(core.cliRank([...many, { name: "yt-dlp", desc: "Audio/video downloader", source: "Homebrew" }], "download").map((x) => x.name)[0], "yt-dlp");
+  const jdk = ["java", "jar", "javac"].map((name) => ({ name, desc: "JDK", source: "Homebrew", pkg: "openjdk" }));
+  assert.deepEqual(core.cliRank(jdk, "").map((x) => x.name), ["jar"]);                      // one entry per package when browsing
+  assert.equal(core.cliRank(jdk, "jav").length, 2);                                          // all of them when searching
+});
+test("cliDescFromScript / cliFormula: one-line description from a script's first comment, package from a Cellar path", () => {
+  assert.equal(core.cliDescFromScript("#!/bin/sh\n# shellcheck disable=SC2\n# BirdCLI through the vault\nrun"), "BirdCLI through the vault");
+  assert.equal(core.cliDescFromScript("#!/usr/bin/env node\n// Resize images\n"), "Resize images");
+  assert.equal(core.cliDescFromScript("#!/bin/sh\necho hi\n# later comment"), "");
+  assert.equal(core.cliDescFromScript("\x7fELF\0\0"), "");
+  assert.equal(core.cliFormula("/opt/homebrew/Cellar/ripgrep/15.2.0/bin/rg"), "ripgrep");
+  assert.equal(core.cliFormula("/usr/bin/ls"), "");
+});
+test("cliAdd / cliRemove: add and drop one tool on the list, never accept junk", () => {
+  assert.deepEqual(core.cliAdd(["gh"], "bird", "posts to X").list.map((x) => x.name), ["gh", "bird"]);
+  assert.match(core.cliAdd(["gh"], "gh").error, /already/);
+  assert.match(core.cliAdd([], "rm -rf /").error, /valid/);
+  assert.equal(core.cliAdd(Array.from({ length: 40 }, (_, i) => "t" + i), "x").error, "An agent can list up to 40 tools.");
+  assert.deepEqual(core.cliRemove([{ name: "gh" }, "bird"], "gh").map((x) => x.name), ["bird"]);
+});
+
+test("parseMultiAsk / multiAskAnswer: a pick-all-that-apply prompt becomes options and answers back as numbers", () => {
+  const title = '[Optional skills] Which optional skills should I include?\n\n1. animate-expo — Only if you build Expo apps.\n2. ask-sonner — Only if you use Sonner toasts.\n3. write-swift — Swift guidance —\noutside web UI; I\'d skip it.\n\nEnter the numbers of all that apply, comma-separated (e.g. "1,3"). Add "; custom answer" to include your own text.';
+  const m = core.parseMultiAsk(title);
+  assert.equal(m.question, "[Optional skills] Which optional skills should I include?");
+  assert.equal(m.options.length, 3);
+  assert.match(m.options[2], /^3\. write-swift — Swift guidance — outside web UI/);   // a wrapped line stays with its option
+  assert.equal(core.parseMultiAsk("What is your name?"), null);
+  assert.equal(core.parseMultiAsk("Q\n1. only one\n\nEnter the numbers of all that apply"), null);
+  assert.equal(core.multiAskAnswer([3, 1, 3], ""), "1,3");
+  assert.equal(core.multiAskAnswer([2], "and docs"), "2; and docs");
+  assert.equal(core.multiAskAnswer([], " just words "), "just words");
+});

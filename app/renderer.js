@@ -157,14 +157,14 @@ async function boot() {
   for (const c of S.chars) { c.accent ||= hue(c.id); S.byId[c.id] = c; }
   if (!S.chars.length) return renderWelcome();
   desk.onEvent(({ id, ev }) => { if (S.per[id]) onEvent(id, ev); });
+  desk.onSynced(({ harness }) => refreshThreads(harness));
   desk.onExit(({ id, code, closed, stderr }) => {
     const p = S.per[id]; if (!p) return;
     p.started = false; p.streaming = false; p.livePromise = null;
     if (code !== 0 && !closed) p.crashed = { code, stderr: strip(stderr).slice(-600) };
     // Questions from a dead process can never be answered: drop them so later dialogs aren't blocked.
-    const showing = dialogQueue[0]?.id === id;
     for (let i = dialogQueue.length - 1; i >= 0; i--) if (dialogQueue[i].id === id) dialogQueue.splice(i, 1);
-    if (showing) showDialog();
+    renderAsk();
     renderChars(); if (id === CK()) { renderDock(); renderCrash(); }
   });
   desk.onLesson(({ path }) => { if (C()?.panel === "learning") { openPanel("lesson"); showLesson(path); } refreshTopics(); });
@@ -199,7 +199,7 @@ async function renderWelcome() {
       step(false, "Add characters",
         "Start with three simple examples (Pi, Scout, Quill), or install the character pack (Andrej, Ilya, History, Ali, Narges) from a terminal: ",
         code(`cd "${st.repo}" && scripts/install-pack.sh all`), ". Your own: ", code("scripts/new-character.sh <id>"), ".")),
-    h("div", { class: "welcome-actions" }, addBtn, h("button", { class: "btn", onclick: () => desk.setupReload() }, "Reload")),
+    h("div", { class: "welcome-actions" }, addBtn, h("button", { class: "btn", onclick: () => openNewAgent() }, "New agent"), h("button", { class: "btn", onclick: () => openConnect() }, "Connect a server"), h("button", { class: "btn", onclick: () => desk.setupReload() }, "Reload")),
     h("p", { class: "fh" }, "Harness scripts somewhere else? Set harnessDir in config.json (see README), then Reload.")));
 }
 
@@ -219,7 +219,7 @@ function renderChars() {
     busy.length > 4 ? h("div", { class: "act-more" }, `+${busy.length - 4} more`) : null) : null;
   $("#sideFoot").replaceChildren(strip, h("button", { class: "profile", "data-pop": "switcher", "data-fast": true, title: "Switch character (⌘K)", onclick: (e) => switcher(e.currentTarget) },
     avatar(ch, 34, 10, { blink: true }),
-    h("span", { class: "meta" }, h("span", { class: "nm" }, ch.name), h("span", { class: "tg" }, "pi " + ch.id)),
+    h("span", { class: "meta" }, h("span", { class: "nm" }, ch.name), h("span", { class: "tg" }, ch.remote ? "on " + ch.remote.target.split("@").pop() : "pi " + ch.id)),
     svg('<path d="M6 8l4-4 4 4M6 12l4 4 4-4"/>')));
 }
 // Switcher order: characters in use right now first, then your most used (recent use counts more), then the rest A-Z.
@@ -231,7 +231,7 @@ function charGroups() {
   const pool = S.chars.filter((c) => !active.includes(c) && !c.pinTop);
   const popular = pool.filter((c) => score(c) >= 1).sort((a, b) => score(b) - score(a)).slice(0, 5);
   const rest = pool.filter((c) => !popular.includes(c)).sort((a, b) => a.name.localeCompare(b.name));
-  return { pinned, active, popular, rest, flat: [...pinned, ...active, ...popular, ...rest] };
+  const flat = [...pinned, ...active, ...popular, ...rest]; return { pinned, active, popular, rest, flat: [...flat.filter((c) => !c.remote), ...flat.filter((c) => c.remote)] };
 }
 function switcher(anchor) {
   popover(anchor, (pop) => {
@@ -245,11 +245,19 @@ function switcher(anchor) {
         avatar(c, 28, 8), h("span", { class: "meta" }, h("span", { class: "k" }, c.name), h("span", { class: "d" }, c.tagline || c.description || "")),
         dotFor(c), i < 9 ? h("kbd", {}, "⌘" + (i + 1)) : null); };
       const sect = (title, arr) => { const x = arr.filter(ok); return x.length ? [h("div", { class: "grp" }, title), ...x.map(row)] : []; };
-      list.replaceChildren(...sect("Pinned", g.pinned), ...sect("In use now", g.active), ...sect("Most used", g.popular), ...sect(g.pinned.length || g.active.length || g.popular.length ? "Everyone else" : "Characters", g.rest));
+      // Two worlds, kept apart: agents on this Mac first, then one section per connected server.
+      const local = (a) => a.filter((c) => !c.remote), servers = [...new Set(S.chars.filter((c) => c.remote).map((c) => c.group))];
+      const lp = local(g.pinned), la = local(g.active), lm = local(g.popular), lr = local(g.rest);
+      const onMac = (t) => (servers.length ? "On this Mac" + (t ? " · " + t : "") : t);
+      list.replaceChildren(...sect(onMac("Pinned"), lp), ...sect(onMac("In use now"), la), ...sect(onMac("Most used"), lm), ...sect(servers.length ? "On this Mac" : lp.length || la.length || lm.length ? "Everyone else" : "Characters", lr),
+        ...servers.flatMap((sv) => sect("On " + sv, S.chars.filter((c) => c.remote && c.group === sv))));
     };
     search.addEventListener("input", draw);
     search.addEventListener("keydown", (e) => { if (e.key === "Enter") list.querySelector(".mi")?.click(); });
-    pop.append(search, list); draw();
+    pop.append(search, list,
+      h("button", { class: "mi connect-mi", onclick: () => { closePopover(); openNewAgent(); } }, h("span", { class: "k" }, "＋ New agent…"), h("span", { class: "d" }, "Create one here")),
+      h("button", { class: "mi", onclick: () => { closePopover(); openConnect(); } }, h("span", { class: "k" }, "＋ Connect a server…"), h("span", { class: "d" }, "Use Pi on another computer")));
+    draw();
     setTimeout(() => search.focus(), 0);
   }, { key: "switcher", cls: "switcher" });
 }
@@ -404,11 +412,12 @@ function leaveChat(key) {
 }
 async function selectCharacter(id) {
   const ch = C(id); if (!ch) return;
+  closePage();
   if (S.active && S.active !== id) leaveChat(CK());
   S.active = id; localStorage.lastChar = id;
   const p = P(CK(id)); p.unread = false; p.lastUsed = Date.now();
   const root = document.documentElement.style;
-  root.setProperty("--accent", ch.accent); root.setProperty("--accent2", ch.accent2 || "#7fd3ff"); root.setProperty("--accent3", ch.accent3 || "#7ee2b8");
+  root.setProperty("--accent", ch.accent); root.setProperty("--accent2", ch.accent2 || "#42a0ff"); root.setProperty("--accent3", ch.accent3 || "#31cf76");
   desk.setCharacter(id);
   $("#input").placeholder = ch.placeholder || `Message ${ch.name}…`;
   document.body.classList.remove("swap"); void document.body.offsetWidth; document.body.classList.add("swap");
@@ -425,6 +434,7 @@ function showChat() {
   renderChars(); renderAll(); renderPanel(); renderCrash();
 }
 function activateChat(key) {
+  closePage();
   const p = S.per[key]; if (!p) return;
   if (CK() !== key) leaveChat(CK());
   S.activeChat[p.harness] = key; p.unread = false; p.lastUsed = Date.now();
@@ -663,6 +673,16 @@ function turnNode(t, isLast) {
   const ch = C(), p = P();
   const box = h("div", { class: "turn" });
   if (t.items.some((m) => m.role === "assistant")) box.append(h("div", { class: "who" }, avatar(ch, 22, 6, { blink: isLast }), ch.name));
+  // Everything before the final reply (thoughts, commands, edits, interim notes) folds into one line.
+  // Steps after it fold too, except edits, failures and questions, which stay visible.
+  const grouped = S.cfg?.showWork !== true;
+  let fm = -1, fb = -1;
+  t.items.forEach((m, mi) => m.role === "assistant" && (m.content || []).forEach((b, bi) => { if (b.type === "text" && b.text) { fm = mi; fb = bi; } }));
+  const early = (mi, bi) => mi < fm || (mi === fm && bi < fb);
+  let run = [];
+  const flush = () => { if (run.length) box.append(workGroup(run, isLast && p.streaming && box.dataset.live === "1")); run = []; };
+  const put = (n) => { flush(); box.append(n); };
+  const step = (node, kind, key, mi, bi) => { if (!grouped) return box.append(node); if (!early(mi, bi) && /^(edit|failed|ask)$/.test(kind)) return put(node); run.push({ node, kind, key }); };
   t.items.forEach((m, mi) => {
     if (m.role === "assistant") {
       (m.content || []).forEach((b, bi) => {
@@ -670,23 +690,41 @@ function turnNode(t, isLast) {
         if (b.type === "text" && b.text) {
           const node = md(b.text);
           if (isLast && p.streaming && m._live && bi === m.content.length - 1) node.lastElementChild?.classList.add("cursor");
-          box.append(node);
-        } else if (b.type === "thinking" && (b.thinking || "").trim() && S.cfg?.showThinking !== false) box.append(thinkNode(b, key, m._live && bi === m.content.length - 1));
-        else if (b.type === "toolCall") box.append(toolNode(b));
+          if (grouped && early(mi, bi)) run.push({ node, kind: "note", key }); else put(node);
+        } else if (b.type === "thinking" && (b.thinking || "").trim() && S.cfg?.showThinking !== false) step(thinkNode(b, key, m._live && bi === m.content.length - 1), "thought", key, mi, bi);
+        else if (b.type === "toolCall") step(toolNode(b), toolKind(b), key, mi, bi);
       });
-      if (m.stopReason === "error" && m.errorMessage) box.append(h("div", { class: "err", title: m.errorMessage }, friendlyError(m.errorMessage)));
-      if (m.stopReason === "aborted") box.append(h("div", { class: "divider" }, "Stopped"));
-    } else if (m.role === "custom" && m.display) box.append(h("div", { class: "note" }, md(textOf(m.content))));
-    else if (m.role === "compactionSummary") box.append(h("div", { class: "divider" }, "Context compacted" + (m.tokensAfter ? ` · ${kTok(m.tokensBefore)} → ~${kTok(m.tokensAfter)}` : m.tokensBefore ? ` · was ${kTok(m.tokensBefore)}` : "")));
-    else if (m.role === "branchSummary") box.append(h("div", { class: "divider" }, "Branch summary"));
-    else if (m.role === "bashExecution") box.append(toolNode({ id: "bx" + m.timestamp, name: "bash", arguments: { command: m.command } }, { content: [{ type: "text", text: m.output }], isError: m.exitCode !== 0 }));
+      if (m.stopReason === "error" && m.errorMessage) put(h("div", { class: "err", title: m.errorMessage }, friendlyError(m.errorMessage)));
+      if (m.stopReason === "aborted") put(h("div", { class: "divider" }, "Stopped"));
+    } else if (m.role === "custom" && m.display) put(h("div", { class: "note" }, md(textOf(m.content))));
+    else if (m.role === "compactionSummary") put(h("div", { class: "divider" }, "Context compacted" + (m.tokensAfter ? ` · ${kTok(m.tokensBefore)} → ~${kTok(m.tokensAfter)}` : m.tokensBefore ? ` · was ${kTok(m.tokensBefore)}` : "")));
+    else if (m.role === "branchSummary") put(h("div", { class: "divider" }, "Branch summary"));
+    else if (m.role === "bashExecution") step(toolNode({ id: "bx" + m.timestamp, name: "bash", arguments: { command: m.command } }, { content: [{ type: "text", text: m.output }], isError: m.exitCode !== 0 }), m.exitCode !== 0 ? "failed" : "command", "bx" + m.timestamp, mi, 0);
   });
+  box.dataset.live = "1"; flush(); delete box.dataset.live;
   const replyText = t.items.filter((m) => m.role === "assistant").map((m) => (m.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n\n")).filter(Boolean).join("\n\n");
   if (replyText && !(isLast && p.streaming)) {
     box.append(h("div", { class: "msg-acts left" }, actBtn(ACT.copy, "Copy reply", (b) => copyText(replyText, b)),
       isLast ? actBtn(ACT.redo, "Regenerate", () => regenerate()) : null));
   }
   return box;
+}
+
+// What a tool call counts as in the folded summary. After the final reply, edits, failures and questions stay visible.
+function toolKind(b) {
+  if (P().results[b.id]?.isError) return "failed";
+  if (/^(edit|write)$/.test(b.name)) return "edit";
+  if (b.name === "ask_user_question") return "ask";
+  return b.name === "bash" ? "command" : /^(read|grep|find|ls)$/.test(b.name) ? "lookup" : "tool";
+}
+// One line for a run of quiet steps ("4 thoughts, 6 commands"); while it's the live end of the turn it shows the current step.
+function workGroup(run, live) {
+  const n = (k) => run.filter((x) => x.kind === k).length, pl = (c, one, many) => (c ? `${c} ${c === 1 ? one : many}` : null);
+  const parts = [pl(n("thought"), "thought", "thoughts"), pl(n("command"), "command", "commands"), pl(n("lookup"), "file lookup", "file lookups"), pl(n("tool"), "tool call", "tool calls"), pl(n("edit"), "edit", "edits"), pl(n("failed"), "failed", "failed"), pl(n("ask"), "question", "questions")].filter(Boolean);
+  const lastHead = run[run.length - 1].node.querySelector(".fold-head");
+  const now = live ? [lastHead?.querySelector(".verb")?.textContent, lastHead?.querySelector("code")?.textContent].filter(Boolean).join(" ") : "";
+  return fold("work" + (live ? " live" : ""), "g" + run[0].key, [svg(ICON.spark), h("span", { class: "verb" }, live ? "Working" : "Worked"), h("code", { style: "font-family:inherit;color:var(--faint)" }, live && now ? now : parts.join(", "))],
+    h("div", { class: "work-list" }, ...run.map((x) => x.node)));
 }
 
 function fold(cls, key, head, body) {
@@ -774,6 +812,7 @@ function renderDock() {
   const wl = Object.values(p.widgets).flat().map(strip).filter((l) => l.trim());
   $("#widgets").hidden = !wl.length; $("#widgets").textContent = wl.join("\n");
   $("#statusline").replaceChildren(...Object.values(p.statuses).map(strip).filter(Boolean).map((s) => h("span", {}, s)));
+  renderAsk();
   $("#attachments").hidden = !p.attachments.length;
   $("#attachments").replaceChildren(...p.attachments.map((a, i) => h("div", { class: "att" }, h("img", { src: `data:${a.mimeType};base64,${a.data}` }), h("button", { onclick: () => { p.attachments.splice(i, 1); renderDock(); } }, "×"))));
 }
@@ -944,47 +983,85 @@ function onUiRequest(id, ev) {
     case "setWidget": if (ev.widgetLines?.length) p.widgets[ev.widgetKey] = ev.widgetLines; else delete p.widgets[ev.widgetKey]; if (id === CK()) renderDock(); return;
     case "set_editor_text": if (id === CK()) { $("#input").value = ev.text; autosize(); } return;
     case "setTitle": return;
-    default: dialogQueue.push({ id, ev }); if (dialogQueue.length === 1) showDialog();
+    default: { // every question from an agent (choices, pick-all, yes/no, text, editor) shows inline above the composer, on the chat that asked
+      const e = { id, ev };
+      if (ev.timeout) e.timer = setTimeout(() => answerAsk(e, { cancelled: true }), ev.timeout);
+      dialogQueue.push(e); renderAsk();
+      if (id !== CK()) toast(`${(C(p.harness) || { name: "Pi" }).name} has a question`, "info", { label: "Open", fn: () => openChatKey(id) });
+      return;
+    }
   }
 }
-function showDialog() {
-  const next = dialogQueue[0];
-  if (!next) return ($("#modal").hidden = true);
-  const { id, ev } = next, ch = C(S.per[id]?.harness) || { id, name: "Pi", accent: "#888" };
-  let timer;
-  const done = (resp) => {
-    clearTimeout(timer);
-    if (dialogQueue[0] !== next) return; // already answered, timed out, or dropped
-    desk.uiResponse(id, { type: "extension_ui_response", id: ev.id, ...resp });
-    dialogQueue.shift(); showDialog();
-  };
-  const d = h("div", { class: "dialog" }, h("div", { class: "from" }, avatar(ch, 18, 5), `${ch.name} asks`));
-  const title = strip(ev.title || "");
-  if (ev.method === "select") {
-    d.append(h("div", { class: "title" }, title));
-    ev.options.forEach((o, i) => {
-      const s = strip(o), m = s.match(/^\s*\d+\.\s*(.*?)(?:\s+—\s+(.*))?$/s);
-      d.append(h("button", { class: "opt", onclick: () => done({ value: o }) }, h("span", { class: "n" }, i + 1),
-        h("span", {}, h("div", { class: "l" }, m ? m[1] : s), m?.[2] ? h("div", { class: "ds" }, m[2]) : null)));
-    });
-    d.append(h("div", { class: "row" }, h("button", { class: "btn", onclick: () => done({ cancelled: true }) }, "Skip")));
-  } else if (ev.method === "confirm") {
-    d.append(h("div", { class: "title" }, title), h("div", { class: "md" }, strip(ev.message)),
-      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => done({ confirmed: false }) }, "No"), h("button", { class: "btn primary", onclick: () => done({ confirmed: true }) }, "Yes")));
+const multiAnswer = (chosen, custom) => { const nums = [...new Set(chosen)].sort((a, b) => a - b).join(","), own = String(custom || "").trim(); return nums && own ? `${nums}; ${own}` : nums || own; }; // same as core.multiAskAnswer (tested there)
+function answerAsk(e, resp) {
+  const i = dialogQueue.indexOf(e); if (i < 0) return; // already answered, timed out, or dropped
+  clearTimeout(e.timer);
+  desk.uiResponse(e.id, { type: "extension_ui_response", id: e.ev.id, ...resp });
+  dialogQueue.splice(i, 1); renderAsk();
+}
+// "1. Label (Recommended) — long explanation" → short label, a Recommended flag, and one short line of explanation.
+function askOpt(raw) {
+  const s = strip(raw), m = s.match(/^\s*\d+\.\s*(.*?)(?:\s+—\s+(.*))?$/s), rx = /\s*\(recommended\)\s*$/i;
+  const l = m ? m[1] : s, full = (m?.[2] || "").trim(), first = full.split(/(?<=[.!?])\s/)[0];
+  return { label: l.replace(rx, ""), rec: rx.test(l), desc: first.length > 110 ? first.slice(0, 107) + "…" : first, full };
+}
+function renderAsk() {
+  const el = $("#ask"), e = dialogQueue.find((d) => d.id === CK());
+  if (!e) { el.hidden = true; el.dataset.eid = ""; el.replaceChildren(); return; }
+  if (el.dataset.eid === e.ev.id) return; // already showing; renderDock runs often
+  const ch = C(S.per[e.id]?.harness) || { id: e.id, name: "Pi", accent: "#888" };
+  el.dataset.eid = e.ev.id; el.hidden = false;
+  if (e.ev.multi) return renderMultiAsk(el, e, ch);
+  if (e.ev.method !== "select") return renderFormAsk(el, e, ch);
+  const opts = e.ev.options.map(askOpt);
+  el.replaceChildren(h("div", { class: "ask-card" },
+    h("div", { class: "from" }, avatar(ch, 16, 4), `${ch.name} asks`),
+    h("div", { class: "ask-q", title: "Click to expand", onclick: (ev) => ev.currentTarget.classList.toggle("open") }, strip(e.ev.title || "")),
+    ...opts.map((o, i) => h("button", { class: "ask-opt" + (o.rec ? " rec" : ""), title: o.full, onclick: () => answerAsk(e, { value: e.ev.options[i] }) },
+      h("span", { class: "n" }, i + 1), h("span", { class: "l" }, o.label), o.rec ? h("span", { class: "pill-rec" }, "Recommended") : null,
+      o.desc ? h("span", { class: "ds" }, o.desc) : null)),
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => answerAsk(e, { cancelled: true }) }, "Skip"))));
+}
+// "Pick all that apply": options toggle on and off, an optional line for your own words, then Send. The answer goes back as
+// the numbers (and your text) the way the extension asked for it.
+function renderMultiAsk(el, e, ch) {
+  const opts = e.ev.multi.options.map(askOpt), sel = (e.sel ||= new Set()), other = h("input", { class: "ask-other", placeholder: "Something else (optional)", spellcheck: "true" });
+  const btns = opts.map((o, i) => h("button", { class: "ask-opt" + (sel.has(i + 1) ? " on" : ""), title: o.full, onclick: () => toggle(i + 1) },
+    h("span", { class: "n" }, sel.has(i + 1) ? "✓" : i + 1), h("span", { class: "l" }, o.label), o.rec ? h("span", { class: "pill-rec" }, "Recommended") : null, o.desc ? h("span", { class: "ds" }, o.desc) : null));
+  const toggle = (n) => { sel.has(n) ? sel.delete(n) : sel.add(n); btns[n - 1].classList.toggle("on", sel.has(n)); btns[n - 1].querySelector(".n").textContent = sel.has(n) ? "✓" : n; };
+  e.toggle = toggle;
+  const send = () => answerAsk(e, { value: multiAnswer([...sel], other.value) });
+  other.addEventListener("keydown", (k) => { if (k.key === "Enter") { k.preventDefault(); send(); } });
+  el.replaceChildren(h("div", { class: "ask-card" },
+    h("div", { class: "from" }, avatar(ch, 16, 4), `${ch.name} asks`, h("span", { class: "ask-hint" }, "Pick all that apply")),
+    h("div", { class: "ask-q open" }, strip(e.ev.multi.question)), ...btns, other,
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => answerAsk(e, { cancelled: true }) }, "Skip"), h("button", { class: "btn primary", onclick: send }, "Send"))));
+}
+// Yes/no, a line of text, or a longer editor: the same card as the choices, with the answer field in it.
+function renderFormAsk(el, e, ch) {
+  const ev = e.ev, long = ev.method === "editor", card = h("div", { class: "ask-card" }, h("div", { class: "from" }, avatar(ch, 16, 4), `${ch.name} asks`));
+  if (ev.method === "confirm") {
+    card.append(h("div", { class: "ask-q open" }, strip(ev.title || "")), ev.message ? h("div", { class: "ask-msg" }, strip(ev.message)) : null,
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => answerAsk(e, { confirmed: false }) }, "No"), h("button", { class: "btn primary", onclick: () => answerAsk(e, { confirmed: true }) }, "Yes")));
   } else {
-    const field = ev.method === "editor" ? h("textarea", { rows: 8 }) : h("input", { placeholder: ev.placeholder || "" });
+    const field = long ? h("textarea", { class: "ask-other", rows: 8 }) : h("input", { class: "ask-other", placeholder: ev.placeholder || "" }), send = () => answerAsk(e, { value: field.value });
     field.value = ev.prefill || "";
-    field.addEventListener("keydown", (e) => { if (e.key === "Enter" && (ev.method !== "editor" || e.metaKey)) { e.preventDefault(); done({ value: field.value }); } });
-    d.append(h("div", { class: "title" }, title), field,
-      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => done({ cancelled: true }) }, "Cancel"), h("button", { class: "btn primary", onclick: () => done({ value: field.value }) }, "Send")));
+    field.addEventListener("keydown", (k) => { if (k.key === "Enter" && (!long || k.metaKey)) { k.preventDefault(); send(); } });
+    card.append(h("div", { class: "ask-q open" }, strip(ev.title || "")), field,
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => answerAsk(e, { cancelled: true }) }, "Cancel"), h("button", { class: "btn primary", onclick: send }, "Send")));
     setTimeout(() => field.focus(), 30);
   }
-  if (ev.timeout) timer = setTimeout(() => done({ cancelled: true }), ev.timeout);
-  $("#modal").replaceChildren(d); $("#modal").hidden = false;
-  d._keys = (e) => { if (ev.method === "select" && /^[1-9]$/.test(e.key) && ev.options[e.key - 1]) done({ value: ev.options[e.key - 1] }); };
-  S.dialogKeys = d._keys;
+  el.replaceChildren(card);
 }
-document.addEventListener("keydown", (e) => { if (!$("#modal").hidden && S.dialogKeys && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") S.dialogKeys(e); });
+// Number keys pick an inline choice, unless you're typing in the composer.
+document.addEventListener("keydown", (e) => {
+  if (!/^[1-9]$/.test(e.key) || e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  const q = dialogQueue.find((d) => d.id === CK()); if (!q) return;
+  if (q.ev.multi) return q.toggle?.(+e.key);
+  if (q.ev.method !== "select") return;
+  const o = q.ev.options[e.key - 1];
+  if (o) answerAsk(q, { value: o });
+});
 
 function toast(msg, type = "info", action) {
   const t = h("div", { class: `toast ${type}` }, msg,
@@ -1239,12 +1316,27 @@ $("#micBtn").addEventListener("contextmenu", (e) => { e.preventDefault(); micMen
 
 // ---------- side panel ----------
 function panelTabs(ch) {
-  const tabs = ch.panel === "learning" ? ["Course", "Lesson", "Tasks", "Memory", "Profile", "Files"] : ["Tasks", "Memory", "Files"];
-  return S.memory ? tabs : tabs.filter((t) => t !== "Memory"); // Memory only when config.memory is set
+  const tabs = ch.panel === "learning" ? ["Course", "Lesson", "Instructions", "Connectors", "Skills", "Memory", "Profile", "Files", "Tasks"] : ["Instructions", "Connectors", "Skills", "Memory", "Files", "Tasks"];
+  const t2 = ch.remote ? tabs.filter((t) => t !== "Files") : tabs; // a server's files aren't on this Mac // a server's files aren't on this Mac
+  return S.memory ? t2 : t2.filter((t) => t !== "Memory"); // Memory only when config.memory is set
 }
 function openPanel(tab) { S.panelOpen = true; localStorage["panel:" + S.active] = "1"; if (tab) S.panelTab = tab[0].toUpperCase() + tab.slice(1); renderPanel(); renderCrumb(); }
 function togglePanel() { S.panelOpen = !S.panelOpen; localStorage["panel:" + S.active] = S.panelOpen ? "1" : "0"; renderPanel(); renderCrumb(); }
 $("#panelToggle").addEventListener("click", togglePanel);
+// Drag the panel's left edge to resize it; the width is remembered.
+(() => {
+  const grip = h("div", { id: "panelGrip", title: "Drag to resize" });
+  $("#panel").prepend(grip);
+  grip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const panel = $("#panel"), startX = e.clientX, startW = panel.getBoundingClientRect().width;
+    document.body.classList.add("resizing");
+    const move = (ev) => { const w = Math.min(Math.max(startW + (startX - ev.clientX), 340), window.innerWidth * 0.6); panel.style.width = w + "px"; localStorage.panelW = Math.round(w); };
+    const up = () => { document.body.classList.remove("resizing"); document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); };
+    document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+  });
+  grip.addEventListener("dblclick", () => { delete localStorage.panelW; $("#panel").style.width = ""; });
+})();
 
 function renderPanel() {
   const ch = C(), panel = $("#panel");
@@ -1257,9 +1349,13 @@ function renderPanel() {
   const body = $("#panelBody");
   body.classList.toggle("flush", S.panelTab === "Lesson" || (S.panelTab === "Files" && S.filePreview));
   panel.classList.toggle("wide", S.panelTab === "Lesson");
+  const w = +localStorage.panelW; panel.style.width = w && S.panelTab !== "Lesson" ? Math.min(Math.max(w, 340), window.innerWidth * 0.6) + "px" : "";
   if (S.panelTab === "Course") renderCourse(body);
   else if (S.panelTab === "Lesson") renderLesson(body);
   else if (S.panelTab === "Tasks") renderTasks(body);
+  else if (S.panelTab === "Connectors") renderConnectors(body);
+  else if (S.panelTab === "Skills") renderSkills(body);
+  else if (S.panelTab === "Instructions") renderInstructions(body);
   else if (S.panelTab === "Memory") renderMemory(body);
   else if (S.panelTab === "Profile") renderProfile(body);
   else renderFiles(body);
@@ -1592,26 +1688,475 @@ function regenerate() {
   if (users.length) resendFrom(users.length - 1, textOf(users[users.length - 1].content));
 }
 
+
+
+// ---------- connectors (MCP) ----------
+// Brand marks (simple-icons) for services we recognise by name or address; anything else gets a generic icon.
+const BRAND_ALIAS = { "hostinger-email": "hostinger", "hostinger_email": "hostinger", gcal: "googlecalendar", "google-calendar": "googlecalendar", gdrive: "googledrive", "google-drive": "googledrive", "github-integration": "github", postgres: "postgresql", "mcp.linear.app": "linear", "mcp.notion.com": "notion", "mcp.sentry.dev": "sentry", "mcp.stripe.com": "stripe", "mcp.figma.com": "figma", "mcp.vercel.com": "vercel", "mcp.mail.hostinger.com": "hostinger" };
+const brandOf = (c) => { const B = window.BRANDS || {}, n = c.name.toLowerCase(); const k = BRAND_ALIAS[n] || (B[n] ? n : null) || BRAND_ALIAS[c.where] || Object.keys(B).find((s) => s.length > 3 && (n.includes(s) || c.where.toLowerCase().includes(s))); return k && B[k] ? B[k] : null; };
+const brandIcon = (c) => { const b = brandOf(c); if (!b) return null; const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("class", "brand"); const p = document.createElementNS("http://www.w3.org/2000/svg", "path"); p.setAttribute("d", b.p); p.setAttribute("fill", b.c.toLowerCase() === "#000000" || parseInt(b.c.slice(1), 16) < 0x303030 ? "#f5f5f5" : b.c); s.append(p); return s; };
+// Built-in mark (bundled, nothing fetched), else the generic icon.
+function connectorIcon(c) {
+  return h("span", { class: "cn-ico", style: `color:${hue(c.name)}` }, brandIcon(c) || svg(CN_ICON[c.kind]));
+}
+const CN_ICON = { web: '<circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2.4 2.2 2.4 11.8 0 14M10 3c-2.4 2.2-2.4 11.8 0 14"/>', desktop: '<rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 17h6M10 14v3"/>' };
+// An isolated agent (character file `isolated: true`) loads only its own skills and the connectors it names in `mcp`, so the
+// panels show just those; "Show all" reveals the rest of this Mac's, which the agent does not use.
+const isoView = () => !!C()?.isolated && !C()?.remote;
+const isoAgent = () => !!C()?.isolated && !C()?.remote;
+const mcpTarget = () => (C()?.remote ? C().id : null);          // a server character manages that server's connectors
+const mcpState = () => ((S.mcps ||= {})[mcpTarget() || "local"] ||= { list: null, status: null, q: "", error: null });
+async function loadConnectors(redraw) {
+  const st = mcpState(), t = mcpTarget();
+  const r = await desk.mcpList(t);
+  if (r.error) { st.error = r.error; st.list = []; } else { st.error = null; st.list = r.list; }
+  if (redraw && S.panelTab === "Connectors") renderPanel();
+  st.status = null;
+  if (!st.error) desk.mcpStatus(t).then((s) => { st.status = s; if (S.panelTab === "Connectors" && S.panelOpen) renderPanel(); });
+}
+// Command-line tools the agent declares (character file `cli`), with whether each is installed. They come first:
+// a CLI plus a skill costs no context, while every connector's tools load into every chat.
+const cliState = () => ((S.cliSt ||= {})[S.active] ||= { list: null, where: "", busy: false });
+function loadCli() {
+  const cs = cliState(), id = S.active; if (cs.busy) return; cs.busy = true;
+  desk.cliStatus(id).then((r) => { cs.list = r.list || []; cs.where = r.where || ""; cs.busy = false; if (S.active === id && S.panelTab === "Connectors" && S.panelOpen) renderPanel(); });
+}
+function renderConnectors(body) {
+  const st = mcpState(), cs = cliState(), hasCli = !!C()?.cli?.length, canCli = !C()?.remote;
+  if (hasCli && !cs.list) loadCli();
+  if (!st.list) { body.replaceChildren(h("div", { class: "cn-empty" }, "Loading…")); loadConnectors(true); return; }
+  const search = h("input", { placeholder: "Search", value: st.q, spellcheck: "false" });
+  const iso = isoView(), named = new Set(Array.isArray(C()?.mcp) ? C().mcp : []), mine = iso ? st.list.filter((c) => named.has(c.name)) : st.list;
+  const head = h("div", { class: "cn-head" }, h("span", {}, hasCli || canCli ? "Name" : "Connector"), h("span", {}, "Type"), h("span", {}, "Status")), rows = h("div", { class: "cn-rows" }), cliBox = h("div", { class: "cn-rows" });
+  const statusCell = (c) => {
+    const s = st.status?.[c.name];
+    if (!c.enabled) return h("span", { class: "cn-st off" }, "Off");
+    if (!st.status) return h("span", { class: "cn-st" }, h("i", { class: "spin" }));
+    if (!s) return h("span", { class: "cn-st off" }, "–");
+    return s.ok ? h("span", { class: "cn-st ok", title: `${s.tools} tools` }, svg('<path d="M5 10.5l3.2 3.2L15 6.8"/>')) : h("span", { class: "cn-st bad", title: s.text }, s.signin ? "Sign in" : "Error");
+  };
+  const draw = () => {
+    st.q = search.value;
+    const q = st.q.toLowerCase().trim();
+    const clis = (cs.list || []).filter((c) => !q || `${c.name} ${c.use}`.toLowerCase().includes(q));
+    cliBox.replaceChildren(...(hasCli || canCli ? [h("div", { class: "sk-grp" }, "Command-line tools", h("span", { class: "sk-count" }, cs.list || !hasCli ? clis.length : "…"),
+        canCli ? h("button", { class: "btn cn-addcli", style: "margin-left:auto", onclick: addCli }, svg('<path d="M10 4v12M4 10h12"/>'), "Add") : null),
+      ...(cs.list || !hasCli ? (clis.length ? clis : [{ empty: true }]).map((c) => c.empty ? h("div", { class: "cn-empty" }, q ? "No matching tools" : "No command-line tools yet. Add one this agent can run.") : h("div", { class: "cn-row", title: c.path || `Not found on ${cs.where}` },
+        h("span", { class: "cn-name" }, svg('<path d="M4 6l4 4-4 4M10 15h6"/>'), h("span", { class: "cn-t cn-two" }, h("b", {}, c.name), c.use ? h("small", {}, c.use) : null)),
+
+        h("span", { class: "cn-type" }, "CLI"),
+        h("span", { class: "cn-st " + (c.path ? "ok" : "bad") }, c.path ? svg('<path d="M5 10.5l3.2 3.2L15 6.8"/>') : "Missing",
+          canCli ? h("button", { class: "cn-x", title: "Remove from this agent", onclick: async () => { const r = await desk.cliRemove(S.active, c.name); if (r.error) return toast(r.error); C().cli = r.list; cs.list = null; renderPanel(); } }, "×") : null))) : [h("div", { class: "cn-empty" }, h("i", { class: "spin" }))]),
+      h("div", { class: "sk-grp" }, "Connectors (MCP)", h("span", { class: "sk-count" }, mine.length),
+        canCli ? h("button", { class: "btn", style: "margin-left:auto", onclick: addConnector }, svg('<path d="M10 4v12M4 10h12"/>'), "Add") : null)] : []));
+    const list = mine.filter((c) => !q || `${c.name} ${c.description} ${c.where}`.toLowerCase().includes(q));
+    head.style.display = list.length ? "" : "none";
+    rows.replaceChildren(...(list.length ? list.map((c) => h("button", { class: "cn-row" + (c.enabled ? "" : " dim"), onclick: () => connectorDetail(c) },
+      h("span", { class: "cn-name" }, connectorIcon(c), h("span", { class: "cn-t" }, c.name)),
+      h("span", { class: "cn-type" }, c.kind === "web" ? "Web" : "Desktop"),
+      statusCell(c))) : [h("div", { class: "cn-empty" }, q ? "No matching connectors" : iso ? "This agent uses no connectors." : "No connectors yet. Add one to give Pi new tools.")]));
+  };
+  search.addEventListener("input", draw);
+  body.replaceChildren(
+    h("div", { class: "cn-bar" }, h("div", { class: "cn-search" }, svg('<circle cx="9" cy="9" r="5.5"/><path d="M13.5 13.5L17 17"/>'), search),
+      !canCli ? h("button", { class: "btn cn-add", onclick: addConnector }, svg('<path d="M10 4v12M4 10h12"/>'), "Add") : null),
+    cliBox, head, rows,
+    st.error ? h("div", { class: "cx-note cn-foot" }, st.error, " ", h("button", { class: "btn", onclick: () => { st.list = null; renderPanel(); } }, "Try again")) : null,
+    h("div", { class: "fh cn-foot" }, mcpTarget() ? `On ${C().remote.target.split("@").pop()}. Changes apply to new chats.` : "On this Mac. Changes apply to new chats."));
+  draw();
+}
+// Search the programs on this Mac and add one to the open agent's list. Listing a tool grants nothing (every program on
+// PATH is already usable); it is what the app shows and checks for this agent.
+function addCli() {
+  sheet((box, close) => {
+    const q = h("input", { placeholder: "Search by name or what it does, e.g. twitter, pdf, github", spellcheck: "false", autocapitalize: "off" });
+    const res = h("div", { class: "cn-rows", style: "max-height:46vh;overflow:auto;margin-top:10px" });
+    const GROUP = { Yours: "Your tools", Homebrew: "Installed with Homebrew", Other: "Other programs", System: "System programs (found by name)" };
+    let seq = 0;
+    const row = (x) => h("button", { class: "cn-row", style: "grid-template-columns:1fr", title: x.path, onclick: async () => {
+      const a = await desk.cliAdd(S.active, x.name, x.desc || ""); if (a.error) return toast(a.error);
+      C().cli = a.list; (S.cliSt ||= {})[S.active] = null; close(); toast(`${x.name} added`); if (S.panelTab === "Connectors") renderPanel();
+    } }, h("span", { class: "cn-name" }, svg('<path d="M4 6l4 4-4 4M10 15h6"/>'), h("span", { class: "cn-t cn-two" }, h("b", {}, x.name), x.desc ? h("small", {}, x.desc) : null)));
+    const find = async () => {
+      const n = ++seq; if (!res.children.length) res.replaceChildren(h("div", { class: "cn-empty" }, h("i", { class: "spin" })));
+      const r = await desk.cliSearch(S.active, q.value); if (n !== seq) return;
+      if (r.error) return res.replaceChildren(h("div", { class: "cn-empty" }, r.error));
+      if (!r.list.length) { const t = q.value.trim().toLowerCase(), have = (C().cli || []).map((x) => x.name || x).filter((m) => t && m.toLowerCase().includes(t));
+        return res.replaceChildren(h("div", { class: "cn-empty" }, have.length ? `Already on this agent's list: ${have.join(", ")}` : "Nothing matches. Try a word for what you want to do.")); }
+      const out = []; let last = "";
+      for (const x of r.list) { if (x.source !== last) { last = x.source; out.push(h("div", { class: "sk-grp" }, GROUP[x.source] || x.source)); } out.push(row(x)); }
+      res.replaceChildren(...out);
+    };
+    q.addEventListener("input", find);
+    box.append(h("div", { class: "title" }, "Add a command-line tool"), h("div", { class: "sub-txt" }, "Programs installed on this Mac. Search by what you want to do, or pick from the list. The agent can run it from its terminal."), q, res,
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: close }, "Done")));
+    find(); setTimeout(() => q.focus(), 0);
+  });
+}
+function addConnector() {
+  sheet((box, close) => {
+    let kind = "web";
+    const name = h("input", { placeholder: "e.g. linear", spellcheck: "false", autocapitalize: "off" });
+    const value = h("input", { placeholder: "https://example.com/mcp", spellcheck: "false", autocapitalize: "off" });
+    const seg = h("div", { class: "cn-seg" });
+    const label = h("span", { class: "fl" }, "Address");
+    const hint = h("span", { class: "fh" }, "A remote connector. If it needs an account, you'll sign in after adding.");
+    const draw = () => {
+      seg.replaceChildren(...[["web", "Web"], ["desktop", "Desktop"]].map(([k, t]) => h("button", { class: k === kind ? "on" : "", onclick: () => { kind = k; draw(); } }, t)));
+      label.textContent = kind === "web" ? "Address" : "Command";
+      value.placeholder = kind === "web" ? "https://example.com/mcp" : "npx -y some-mcp-server";
+      hint.textContent = kind === "web" ? "A remote connector. If it needs an account, you'll sign in after adding." : "A program that runs " + (mcpTarget() ? "on the server" : "on this Mac") + " and starts the connector.";
+    };
+    const err = h("div", { class: "cx-note", hidden: true });
+    const go = h("button", { class: "btn primary", onclick: async () => {
+      go.disabled = true; err.hidden = true;
+      const r = await desk.mcpAdd({ kind, name: name.value, value: value.value }, mcpTarget());
+      go.disabled = false;
+      if (r.error) { err.textContent = r.error; err.hidden = false; return; }
+      if (r.cancelled) return;
+      close(); toast("Connector added"); loadConnectors(true);
+    } }, "Add");
+    draw();
+    box.append(h("div", { class: "title" }, "Add a connector"), seg,
+      h("label", { class: "field" }, h("span", { class: "fl" }, "Name"), name),
+      h("label", { class: "field" }, label, value, hint), err,
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: close }, "Cancel"), go));
+    setTimeout(() => name.focus(), 0);
+  });
+}
+function connectorDetail(c) {
+  sheet((box, close) => {
+    const s = mcpState().status?.[c.name], tg = mcpTarget();
+    const sw = h("button", { class: "switch" + (c.enabled ? " on" : ""), onclick: async () => { c.enabled = !c.enabled; sw.classList.toggle("on", c.enabled); await desk.mcpEnable(c.name, c.enabled, tg); loadConnectors(true); } }, h("i"));
+    box.append(h("div", { class: "title" }, c.name),
+      c.description ? h("div", { class: "sub-txt" }, c.description) : null,
+      h("div", { class: "cn-kv" }, h("span", {}, "Type"), h("span", {}, c.kind === "web" ? "Web" : "Desktop"), h("span", {}, c.kind === "web" ? "Server" : "Program"), h("span", {}, c.where || "–"),
+        h("span", {}, "Status"), h("span", {}, !c.enabled ? "Off" : s ? (s.ok ? `Connected · ${s.tools} tools` : s.text) : "Checking…")),
+      h("div", { class: "cn-on" }, h("span", {}, "Enabled"), sw),
+      h("div", { class: "row" },
+        h("button", { class: "btn danger-t", onclick: async () => { if (await confirmModal({ title: `Remove ${c.name}?`, body: "Pi will stop using it in new chats.", confirm: "Remove", danger: true })) { close(); await desk.mcpRemove(c.name, tg); loadConnectors(true); } } }, "Remove"),
+        s?.signin ? h("button", { class: "btn primary", onclick: async (e) => { e.currentTarget.textContent = "Waiting for sign-in…"; const r = await desk.mcpLogin(c.name, tg); if (r.error) toast(r.error, "error"); close(); loadConnectors(true); } }, "Sign in") : null,
+        h("button", { class: "btn", onclick: close }, "Done")));
+  });
+}
+
+
+// ---------- skills ----------
+const skState = () => ((S.skills ||= {})[mcpTarget() || "local"] ||= { list: null, q: "", error: null });
+async function loadSkills(redraw) {
+  const st = skState(), r = await desk.skillsList(mcpTarget());
+  if (r.error) { st.error = r.error; st.list = []; } else { st.error = null; st.list = r.list; }
+  if (redraw && S.panelTab === "Skills" && S.panelOpen) renderPanel();
+}
+const SK_ICON = '<path d="M6 3h8a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z"/><path d="M7.5 7.5h5M7.5 10.5h5M7.5 13.5h3"/>';
+const skDate = (ms) => (ms ? (Date.now() - ms < 864e5 * 2 ? ago(ms) : new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" })) : "");
+const skAgent = (s) => C(s.agent)?.name || s.agent;
+function renderSkills(body) {
+  const st = skState(), tg = mcpTarget();
+  if (!st.list) { body.replaceChildren(h("div", { class: "cn-empty" }, "Loading…")); loadSkills(true); return; }
+  const search = h("input", { placeholder: "Search", value: st.q, spellcheck: "false" });
+  const rows = h("div"), hidden = h("div", { class: "fh cn-foot" });
+  const row = (s) => h("button", { class: "sk-row" + (s.enabled ? "" : " dim"), onclick: () => skillDetail(s) },
+    h("span", { class: "sk-ico" }, svg(SK_ICON)),
+    h("span", { class: "sk-main" }, h("span", { class: "sk-name" }, s.name, s.enabled ? null : h("span", { class: "sk-tag" }, "Off"), s.pkg ? h("span", { class: "sk-tag" }, s.pkg.replace(/^@[^/]+\//, "")) : null),
+      h("span", { class: "sk-desc" }, h("span", {}, s.source === "user" ? "by you" : s.source === "agent" ? `${skAgent(s)}'s` : "from a package"), " · ", s.description || "No description")),
+    h("span", { class: "sk-date" }, skDate(s.mtime)));
+  const draw = () => {
+    st.q = search.value; const q = st.q.toLowerCase().trim();
+    // Another agent's own skills aren't loaded here, so they stay out of this list. An isolated agent loads only its own;
+    // every other agent also loads the global and package skills.
+    const iso = isoView();
+    const here = st.list.filter((s) => (iso ? s.source === "agent" && s.agent === S.active : s.source !== "agent" || s.agent === S.active));
+    const list = here.filter((s) => !q || `${s.name} ${s.description} ${s.pkg}`.toLowerCase().includes(q));
+    const nOut = st.list.length - here.length;
+    hidden.replaceChildren(...(nOut > 0 && !isoAgent() ? [`${nOut} ${nOut === 1 ? "skill that belongs" : "skills that belong"} to other agents ${nOut === 1 ? "is" : "are"} hidden.`] : []));
+    const group = (title, arr) => arr.length ? [h("div", { class: "sk-grp" }, title, h("span", { class: "sk-count" }, arr.length)), ...arr.map(row)] : [];
+    const mine = list.filter((s) => s.source === "user"), pk = list.filter((s) => s.source === "package");
+    // Each agent's own skills get their own group, the open agent first.
+    const ids = [...new Set(list.filter((s) => s.source === "agent").map((s) => s.agent))].sort((a, b) => (b === S.active) - (a === S.active) || skAgent({ agent: a }).localeCompare(skAgent({ agent: b })));
+    const perAgent = ids.flatMap((id) => group(`${skAgent({ agent: id })}'s skills`, list.filter((s) => s.source === "agent" && s.agent === id)));
+    rows.replaceChildren(...(list.length ? [...perAgent, ...group("Created by you", mine), ...group("From packages", pk)] : [h("div", { class: "cn-empty" }, q ? "No matching skills" : isoView() ? "This agent carries no skills of its own. " : "No skills yet. Add one to teach Pi a repeatable way of working.")]));
+  };
+  search.addEventListener("input", draw);
+  body.replaceChildren(
+    h("div", { class: "cn-bar" }, h("div", { class: "cn-search" }, svg('<circle cx="9" cy="9" r="5.5"/><path d="M13.5 13.5L17 17"/>'), search),
+      h("button", { class: "btn cn-add", onclick: addSkill }, svg('<path d="M10 4v12M4 10h12"/>'), "Add")),
+    st.error ? h("div", { class: "cx-note cn-foot" }, st.error, " ", h("button", { class: "btn", onclick: () => { st.list = null; renderPanel(); } }, "Try again")) : null,
+    rows, hidden, h("div", { class: "fh cn-foot" }, (tg ? `On ${C().remote.target.split("@").pop()}. ` : "On this Mac. ") + "Changes apply to new chats."));
+  draw();
+}
+function addSkill() {
+  sheet((box, close) => {
+    const name = h("input", { placeholder: "e.g. weekly-report", spellcheck: "false", autocapitalize: "off" });
+    const desc = h("textarea", { rows: 2, placeholder: "Write weekly status reports. Use when someone asks for an update or summary of the week.", spellcheck: "true" });
+    const ins = h("textarea", { rows: 8, placeholder: "Step by step, what should Pi do?", spellcheck: "true" });
+    const err = h("div", { class: "cx-note", hidden: true });
+    const go = h("button", { class: "btn primary", onclick: async () => {
+      go.disabled = true; err.hidden = true;
+      const r = await desk.skillCreate({ name: name.value, description: desc.value, instructions: ins.value }, mcpTarget());
+      go.disabled = false;
+      if (r.error) { err.textContent = r.error; err.hidden = false; return; }
+      close(); toast("Skill added"); loadSkills(true);
+    } }, "Add skill");
+    box.append(h("div", { class: "title" }, "Add a skill"),
+      h("div", { class: "sub-txt" }, "A skill is a how-to that Pi reads only when the task calls for it."),
+      h("label", { class: "field" }, h("span", { class: "fl" }, "Name"), name),
+      h("label", { class: "field" }, h("span", { class: "fl" }, "When should Pi use it?"), desc, h("span", { class: "fh" }, "Pi decides from this sentence, so say what it does and when.")),
+      h("label", { class: "field" }, h("span", { class: "fl" }, "Instructions"), ins), err,
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: close }, "Cancel"), go));
+    setTimeout(() => name.focus(), 0);
+  });
+}
+async function skillDetail(s) {
+  const tg = mcpTarget(), full = await desk.skillRead(s.dir, tg);
+  sheet((box, close) => {
+    const sw = h("button", { class: "switch" + (s.enabled ? " on" : ""), onclick: async () => { const want = !s.enabled; const r = await desk.skillEnable(s.dir, want, tg); if (r.error) return toast(r.error, "error"); s.enabled = want; sw.classList.toggle("on", want); loadSkills(true); } }, h("i"));
+    const mine = s.source === "user";
+    box.append(h("div", { class: "title" }, s.name), h("div", { class: "sub-txt" }, s.description || ""),
+      h("div", { class: "cn-on" }, h("span", {}, "Enabled"), sw),
+      h("pre", { class: "sk-body" }, full.error ? full.error : full.body.trim() || "(empty)"),
+      h("div", { class: "row" },
+        mine ? h("button", { class: "btn danger-t", onclick: async () => { const r = await desk.skillDelete(s.dir, tg); if (r.error) return toast(r.error, "error"); if (r.cancelled) return; close(); loadSkills(true); } }, "Remove") : null,
+        h("button", { class: "btn", onclick: close }, "Done")));
+  }, { wide: true });
+}
+
+
+// ---------- instructions (AGENTS.md) ----------
+const inState = (id = S.active) => ((S.instr ||= {})[id] ||= { data: null, error: null, folder: null, global: null });
+async function loadInstr(redraw) {
+  const id = S.active, st = inState(id), r = await desk.instrGet(id);
+  if (r.error) { st.error = r.error; st.data = null; } else { st.error = null; st.data = r; st.folder = null; st.global = null; }
+  if (redraw && S.panelTab === "Instructions" && S.panelOpen && S.active === id) renderPanel();
+}
+function renderInstructions(body) {
+  const ch = C(), st = inState();
+  if (!st.data && !st.error) { body.replaceChildren(h("div", { class: "cn-empty" }, "Loading…")); loadInstr(true); return; }
+  if (st.error) { body.replaceChildren(h("div", { class: "cx-note cn-foot" }, st.error, " ", h("button", { class: "btn", onclick: () => { st.error = null; renderPanel(); } }, "Try again"))); return; }
+  const d = st.data, tilde = (p) => p.replace(d.home, "~");
+  // One editable block: a plain text box with its own Save and Undo, only enabled when something changed.
+  const editor = (scope, f, { title, sub, empty, rows }) => {
+    const ta = h("textarea", { rows, spellcheck: "true", placeholder: empty }); ta.value = st[scope] ?? f.content;
+    const save = h("button", { class: "btn primary", disabled: true }, "Save"), undo = h("button", { class: "btn", disabled: true }, "Undo"), note = h("span", { class: "fh in-saved" });
+    const dirty = () => { const x = ta.value !== f.content; save.disabled = undo.disabled = !x; note.textContent = x ? "Unsaved changes" : ""; st[scope] = x ? ta.value : null; };
+    ta.addEventListener("input", dirty); undo.onclick = () => { ta.value = f.content; dirty(); };
+    save.onclick = async () => {
+      save.disabled = true; save.textContent = "Saving…";
+      const r = await desk.instrSave(S.active, scope, ta.value);
+      save.textContent = "Save";
+      if (r.error) { save.disabled = false; return toast(r.error, "error"); }
+      toast("Saved. New chats will use it."); await loadInstr(true);
+    };
+    return h("section", { class: "in-card" }, h("div", { class: "in-title" }, title), h("div", { class: "fh" }, sub), ta,
+      f.shadowed.length ? h("div", { class: "in-warn" }, `Pi only reads one file per folder, and it picks ${f.path.split("/").pop()}. ${f.shadowed.join(" and ")} in the same folder ${f.shadowed.length > 1 ? "are" : "is"} ignored.`) : null,
+      h("div", { class: "in-foot" }, h("span", { class: "fh in-path", title: f.path }, f.exists ? tilde(f.path) : `New file: ${tilde(f.path)}`), note, undo, save));
+  };
+  const parents = d.parents.length ? h("details", { class: "in-card" }, h("summary", { class: "in-title" }, `Also applies: ${d.parents.length} file${d.parents.length > 1 ? "s" : ""} in parent folders`),
+    ...d.parents.map((p) => h("div", {}, h("div", { class: "fh in-path" }, tilde(p.path)), h("pre", { class: "sk-body" }, p.content.trim() || "(empty)")))) : null;
+  body.replaceChildren(
+    h("div", { class: "sub-txt in-intro" }, `What ${ch.name} is told at the start of every chat. Pi reads these files from ${ch.remote ? "the server" : "this Mac"}.`),
+    editor("folder", d.folder, { title: `${ch.name}'s instructions`, sub: `For chats that start in ${tilde(d.dir)}.`, empty: "Nothing yet. Write how this agent should behave, what it knows about the project, and what to avoid.", rows: 12 }),
+    parents, h("div", { class: "fh cn-foot" }, "Changes apply to new chats."));
+}
+
+
+// ---------- new agent ----------
+// Name + what it does + (optional) instructions. Everything else has a good default behind "Options".
+async function openNewAgent() {
+  const info = await desk.remotes();
+  const ACC = ["#8b7bff", "#7fd3ff", "#7ee2b8", "#f2b86b", "#ff8fa3", "#c792ea", "#a3e635", "#f97316"];
+  sheet((box, close) => {
+    let accent = ACC[Math.floor(Math.random() * ACC.length)], target = "";
+    const name = h("input", { placeholder: "e.g. Scout", spellcheck: "false", maxlength: 30 });
+    const tag = h("input", { placeholder: "e.g. Research with sources", spellcheck: "true", maxlength: 80 });
+    const ins = h("textarea", { rows: 6, spellcheck: "true", placeholder: "How should it work? What does it know? What should it avoid?\n\nYou can leave this empty and add it later in the Instructions tab." });
+    let folderPath = ""; // relative to home; "" = a folder named after the agent
+    const folderLabel = h("span", { class: "fp-path" });
+    const browse = h("div", { class: "fp-browse", hidden: true });
+    const slug = () => name.value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30);
+    let agentsDir = "~/Documents/Pi Desktop";
+    desk.config().then((c) => { if (c?.agentsDir) { agentsDir = c.agentsDir.replace(/\/+$/, ""); drawFolder(); } });
+    const drawFolder = () => { folderLabel.textContent = folderPath ? "~/" + folderPath : target ? `~/${slug() || "name"}  (its own folder)` : `${agentsDir}/pi-${slug() || "name"}  (its own folder)`; folderLabel.classList.toggle("dflt", !folderPath); };
+    name.addEventListener("input", drawFolder);
+    async function openBrowse(rel) {
+      browse.hidden = false; browse.replaceChildren(h("div", { class: "fh fp-msg" }, "Loading…"));
+      const r = await desk.agentListDirs(target, rel);
+      if (r.error) { browse.replaceChildren(h("div", { class: "cx-note" }, r.error), h("button", { class: "btn", onclick: () => { browse.hidden = true; } }, "Close")); return; }
+      const parts = rel ? rel.split("/") : [];
+      const crumbs = h("div", { class: "fp-crumbs" }, h("button", { onclick: () => openBrowse("") }, "~"), ...parts.flatMap((p, i) => [h("span", {}, "/"), h("button", { onclick: () => openBrowse(parts.slice(0, i + 1).join("/")) }, p)]));
+      const nf = h("input", { placeholder: "New folder name", spellcheck: "false" });
+      const use = (p) => { folderPath = p; drawFolder(); browse.hidden = true; };
+      const list = h("div", { class: "fp-list" }, ...(r.dirs.length ? r.dirs.map((d) => h("button", { class: "fp-row", onclick: () => openBrowse(rel ? rel + "/" + d : d) }, svg('<path d="M3 6a2 2 0 012-2h3l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>'), d)) : [h("div", { class: "fh fp-msg" }, "No folders here.")]));
+      browse.replaceChildren(crumbs, list,
+        h("div", { class: "fp-new" }, nf, h("button", { class: "btn", onclick: () => { const n = nf.value.trim(); if (n) use(rel ? rel + "/" + n : n); } }, "Create and use")),
+        h("div", { class: "row fp-foot" }, h("button", { class: "btn", onclick: () => { browse.hidden = true; } }, "Cancel"), h("button", { class: "btn primary", disabled: !rel, title: rel ? "" : "Open a folder first. Your home folder itself can't be used.", onclick: () => use(rel) }, rel ? `Use ~/${rel}` : "Open a folder first")));
+    }
+    const choose = h("button", { class: "btn", onclick: async () => {
+      if (target) return openBrowse(folderPath.split("/").slice(0, -1).join("/")); // a server: browse it in here, starting next to the current choice
+      const p = await desk.agentPickFolder();
+      if (p.error) { err.textContent = p.error; err.hidden = false; } else if (p.path) { err.hidden = true; folderPath = p.path; drawFolder(); }
+    } }, "Choose…");
+    const folder = h("div", { class: "fp" }, h("div", { class: "fp-row0" }, folderLabel, choose), browse);
+    drawFolder();
+    const model = h("select", {}, h("option", { value: "" }, "Your default model"));
+    const where = h("div", { class: "cn-seg" });
+    const swatches = h("div", { class: "ag-sw" });
+    const err = h("div", { class: "cx-note", hidden: true });
+    const drawSw = () => swatches.replaceChildren(...ACC.map((c) => h("button", { class: c === accent ? "on" : "", style: `--c:${c}`, title: c, onclick: () => { accent = c; drawSw(); } })));
+    const opts = [["", "This Mac"], ...info.remotes.map((x) => [x.id, x.name])];
+    const drawWhere = () => where.replaceChildren(...opts.map(([v, t]) => h("button", { class: v === target ? "on" : "", onclick: () => { target = v; folderPath = ""; browse.hidden = true; drawFolder(); drawWhere(); } }, t)));
+    drawSw(); drawWhere();
+    desk.agentModels().then((list) => { for (const m of list) model.append(h("option", { value: m.value }, `${m.model}  ·  ${m.provider}`)); });
+    const go = h("button", { class: "btn primary", onclick: async () => {
+      if (!name.value.trim()) { name.focus(); return; }
+      go.disabled = true; err.hidden = true; go.textContent = "Creating…";
+      const r = await desk.agentCreate({ name: name.value, tagline: tag.value, instructions: ins.value, accent, model: model.value, folder: folderPath, target: target || null });
+      go.disabled = false; go.textContent = "Create agent";
+      if (r.error) { err.textContent = r.error; err.hidden = false; return; }
+      if (r.cancelled) return;
+      close();
+      if (r.notes?.length) toast(r.notes[0]);
+      localStorage.lastChar = r.id; desk.agentsReload();
+    } }, "Create agent");
+    box.append(h("div", { class: "title" }, "New agent"),
+      h("div", { class: "sub-txt" }, "Give it a name and tell it what to do. It appears in your list straight away."),
+      h("label", { class: "field" }, h("span", { class: "fl" }, "Name"), name),
+      h("label", { class: "field" }, h("span", { class: "fl" }, "What is it for?"), tag),
+      h("label", { class: "field" }, h("span", { class: "fl" }, "Instructions"), ins),
+      info.remotes.length ? h("div", { class: "field" }, h("span", { class: "fl" }, "Where should it run?"), where) : null,
+      h("details", { class: "cx-adv" }, h("summary", {}, "Options"),
+        h("label", { class: "field" }, h("span", { class: "fl" }, "Model"), model),
+        h("label", { class: "field" }, h("span", { class: "fl" }, "Color"), swatches),
+        h("div", { class: "field" }, h("span", { class: "fl" }, "Start in folder"), folder, h("span", { class: "fh" }, "Where it works. Its chats and instructions live here. Must be inside your home folder."))),
+      err, h("div", { class: "row" }, h("button", { class: "btn", onclick: close }, "Cancel"), go));
+    setTimeout(() => name.focus(), 0);
+  });
+}
+
+// ---------- connect a server ----------
+// One sheet, three moments: type where it is → watch it check → start chatting. Plain words only; every failure names its one fix.
+async function openConnect() {
+  const info = await desk.remotes();
+  sheet((box, close) => {
+    const addr = h("input", { placeholder: "me@my-server.com", spellcheck: "false", autocapitalize: "off", autocomplete: "off" });
+    const folder = h("input", { placeholder: "Home folder (default)", spellcheck: "false" });
+    const name = h("input", { placeholder: "e.g. Work server", spellcheck: "false" });
+    const body = h("div", { class: "cx" });
+    let busy = false, last = null;
+    const req = () => ({ address: addr.value, folder: folder.value, name: name.value });
+
+    const row = (state, text, sub) => h("div", { class: "cx-row " + state },
+      h("span", { class: "cx-i" }, state === "ok" ? "✓" : state === "bad" ? "!" : state === "run" ? h("i", { class: "spin" }) : ""),
+      h("div", {}, h("div", { class: "cx-t" }, text), sub ? h("div", { class: "fh" }, sub) : null));
+
+    const showForm = (note) => {
+      const chips = info.known.length ? h("div", { class: "cx-chips" }, h("span", { class: "fh" }, "From your SSH config: "),
+        ...info.known.map((k) => h("button", { class: "chip", onclick: () => { addr.value = k; addr.focus(); } }, k))) : null;
+      const adv = h("details", { class: "cx-adv" }, h("summary", {}, "Options"),
+        h("label", { class: "field" }, h("span", { class: "fl" }, "Name"), name),
+        h("label", { class: "field" }, h("span", { class: "fl" }, "Start in folder"), folder));
+      const go = h("button", { class: "btn primary", onclick: () => run() }, "Connect");
+      body.replaceChildren(
+        h("div", { class: "title" }, "Connect a server"),
+        h("div", { class: "sub-txt" }, "Run Pi on another computer and chat with it here. Enter its address, the same one you would use with ssh."),
+        note ? h("div", { class: "cx-note" }, note) : null,
+        h("label", { class: "field" }, h("span", { class: "fl" }, "Server address"), addr, h("span", { class: "fh" }, "A name like “myserver”, or user@address")), chips, adv,
+        h("div", { class: "row" }, h("button", { class: "btn", onclick: close }, "Cancel"), go));
+      setTimeout(() => addr.focus(), 0);
+    };
+
+    const showProgress = (steps, actions = [], title = "Connecting…") => body.replaceChildren(
+      h("div", { class: "title" }, title), h("div", { class: "cx-list" }, ...steps),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { if (!busy) showForm(); } }, "Back"), ...actions));
+
+    async function run() {
+      if (busy) return;
+      if (!addr.value.trim()) { addr.focus(); return; }
+      busy = true;
+      showProgress([row("run", "Reaching the server…"), row("", "Signing in"), row("", "Checking Pi")]);
+      const r = await desk.remoteTest(req());
+      busy = false; last = r;
+      if (r.ok) return showReady(r);
+      const steps = [
+        row(r.reached ? "ok" : "bad", r.reached ? "Reached the server" : "Couldn't reach the server", r.reached ? null : r.problem),
+        row(r.signedIn ? "ok" : r.reached ? "bad" : "", "Signing in", !r.signedIn && r.reached ? r.problem : null),
+        row(r.pi ? "ok" : r.signedIn ? "bad" : "", "Pi on the server", r.signedIn && !r.pi ? r.problem : null)];
+      const actions = [];
+      if (r.fix === "key") actions.push(h("button", { class: "btn primary", onclick: async () => { await desk.remoteKeySetup(req()); showWaiting(); } }, "Set up sign-in"));
+      else if (r.fix === "install") actions.push(h("button", { class: "btn primary", onclick: installPi }, "Install Pi for me"));
+      else actions.push(h("button", { class: "btn primary", onclick: run }, "Try again"));
+      if (r.detail) steps.push(h("div", { class: "fh cx-detail" }, r.detail));
+      showProgress(steps, actions, "Almost there");
+    }
+    const showWaiting = () => body.replaceChildren(
+      h("div", { class: "title" }, "Finish in Terminal"),
+      h("div", { class: "sub-txt" }, "A Terminal window opened. Type the server's password there once. After that, this Mac signs in by itself. Come back here when it says it's done."),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => showForm() }, "Back"), h("button", { class: "btn primary", onclick: run }, "I'm done, check again")));
+    async function installPi() {
+      busy = true;
+      showProgress([row("ok", "Reached the server"), row("ok", "Signed in"), row("run", "Installing Pi…", "This can take a minute.")], [], "Setting up");
+      const r = await desk.remoteInstallPi(req());
+      busy = false;
+      if (r.ok) return showReady(r);
+      showProgress([row("ok", "Reached the server"), row("ok", "Signed in"), row("bad", "Couldn't install Pi", r.installLog || r.problem)], [h("button", { class: "btn primary", onclick: run }, "Try again")], "Almost there");
+    }
+    function showReady(r) {
+      const where = r.target.split("@").pop();
+      const go = h("button", { class: "btn primary", onclick: async () => {
+        go.disabled = true;
+        const res = await desk.remoteAdd(req());
+        if (res.error) { go.disabled = false; return toast(res.error, "error"); }
+        close();
+        // The window reloads its character list from main; a reload is the simplest way to pick up the new one.
+        localStorage.lastChar = res.id; desk.setupReload();
+      } }, "Start chatting");
+      body.replaceChildren(
+        h("div", { class: "title" }, "You're connected"),
+        h("div", { class: "cx-list" }, row("ok", "Reached " + where), row("ok", "Signed in"), row("ok", "Pi is ready" + (r.version ? ` (${r.version})` : ""), r.folderOk ? null : "That folder wasn't found, so chats will start in the home folder.")),
+        h("div", { class: "row" }, h("button", { class: "btn", onclick: () => showForm() }, "Back"), go));
+      setTimeout(() => go.focus(), 0);
+    }
+
+    addr.addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+    const saved = info.remotes.length ? h("div", { class: "cx-saved" }, h("div", { class: "grp" }, "Connected servers"),
+      ...info.remotes.map((r) => h("div", { class: "cx-srv" }, h("span", {}, r.name, h("span", { class: "fh" }, "  " + r.target)),
+        h("span", { class: "cx-btns" }, h("button", { class: "btn", title: "Look for more agents on this server", onclick: async (e) => { e.currentTarget.textContent = "Looking…"; const x = await desk.remoteRefresh(r.id); if (x.error) return toast(x.error, "error"); toast(x.count ? `Found ${x.count} agent${x.count > 1 ? "s" : ""} on ${r.name}` : `No extra agents on ${r.name}`); desk.setupReload(); } }, "Find agents"),
+        h("button", { class: "btn", onclick: async () => { if (await confirmModal({ title: `Disconnect ${r.name}?`, body: "Chats you had open on it will close. Nothing is deleted on the server.", confirm: "Disconnect", danger: true })) { await desk.remoteRemove(r.id); desk.setupReload(); } } }, "Remove"))))) : null;
+    showForm();
+    box.append(body, saved);
+  });
+}
+
 // ---------- sheets (confirm, settings, shortcuts) ----------
+// Forms open as a page in the main area (Back arrow or Esc to leave), never as an overlay. Picking a chat or agent closes it.
+let pageClose = null;
+const closePage = () => pageClose?.();
 function sheet(build, { wide = false } = {}) {
-  const back = h("div", { class: "sheet-back" });
+  closePage();
   const box = h("div", { class: "dialog" + (wide ? " wide" : "") });
-  const close = () => { back.remove(); document.removeEventListener("keydown", onKey, true); };
-  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-  back.addEventListener("mousedown", (e) => { if (e.target === back) close(); });
-  document.addEventListener("keydown", onKey, true);
+  const wrap = h("div", { class: "page", style: `top:${$("#topbar")?.offsetHeight || 52}px` },
+    h("div", { class: "page-bar" }, h("button", { class: "btn", onclick: () => close() }, svg('<path d="M12 4l-6 6 6 6"/>'), "Back")), box);
+  const onKey = (e) => { if (e.key === "Escape" && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) { e.stopPropagation(); close(); } };
+  const close = () => { wrap.remove(); document.removeEventListener("keydown", onKey, true); if (pageClose === close) pageClose = null; };
+  pageClose = close; document.addEventListener("keydown", onKey, true);
   build(box, close);
-  back.append(box); document.body.append(back);
+  $("#main").append(wrap);
   return close;
 }
+// Confirmations are an inline card above the message box, like an agent's question.
+let confirmDone = null;
 function confirmModal({ title, body, confirm = "OK", danger = false }) {
-  return new Promise((res) => sheet((box, close) => {
-    const done = (v) => { close(); res(v); };
+  confirmDone?.(false);
+  return new Promise((res) => {
+    const el = $("#confirm");
+    const done = (v) => { el.hidden = true; el.replaceChildren(); document.removeEventListener("keydown", onKey, true); if (confirmDone === done) confirmDone = null; res(v); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(false); } };
     const ok = h("button", { class: "btn primary" + (danger ? " danger" : ""), onclick: () => done(true) }, confirm);
-    box.append(h("div", { class: "title" }, title), h("div", { class: "sub-txt" }, body),
-      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => done(false) }, "Cancel"), ok));
-    setTimeout(() => ok.focus(), 0);
-  }));
+    confirmDone = done; document.addEventListener("keydown", onKey, true);
+    el.replaceChildren(h("div", { class: "ask-card" }, h("div", { class: "ask-q open" }, title), h("div", { class: "ask-msg" }, body),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: () => done(false) }, "Cancel"), ok)));
+    el.hidden = false; setTimeout(() => ok.focus(), 0);
+  });
 }
 async function openSettings() {
   const cfg = await desk.config();
@@ -1622,7 +2167,7 @@ async function openSettings() {
     const hotkey = h("input", { value: cfg.hotkey || "", spellcheck: "false" });
     const providers = h("input", { value: (cfg.modelProviders || []).join(", "), spellcheck: "false" });
     const chk = (v) => { const c = h("input", { type: "checkbox" }); c.checked = !!v; return c; };
-    const notify = chk(cfg.notifyWhenHidden), thinking = chk(cfg.showThinking !== false), login = chk(cfg.openAtLogin);
+    const notify = chk(cfg.notifyWhenHidden), thinking = chk(cfg.showThinking !== false), showWork = chk(cfg.showWork === true), login = chk(cfg.openAtLogin);
     const finSound = chk(cfg.finishSound !== false), finVoice = chk(cfg.finishVoice !== false);
     // Microphone picker: applies immediately (no Save needed); the meter shows the chosen input is live.
     const micSel = h("select", {}, h("option", { value: "" }, "System default"));
@@ -1651,7 +2196,7 @@ async function openSettings() {
     fillMics();
     const save = async () => {
       const r = await desk.saveConfig({ userName: name.value.trim(), hotkey: hotkey.value.trim() || cfg.hotkey, notifyWhenHidden: notify.checked,
-        showThinking: thinking.checked, finishSound: finSound.checked, finishVoice: finVoice.checked, openAtLogin: login.checked, modelProviders: providers.value.split(",").map((x) => x.trim()).filter(Boolean) });
+        showThinking: thinking.checked, showWork: showWork.checked, finishSound: finSound.checked, finishVoice: finVoice.checked, openAtLogin: login.checked, modelProviders: providers.value.split(",").map((x) => x.trim()).filter(Boolean) });
       if (r?.error) return toast(r.error, "error");
       S.cfg = await desk.config(); S.user = S.cfg.userName; S.providers = S.cfg.modelProviders || [];
       close(); renderAll(); renderChars(); toast("Settings saved");
@@ -1661,7 +2206,8 @@ async function openSettings() {
       field("Show / hide hotkey", hotkey, "Electron accelerator, e.g. Alt+Shift+Space"),
       field("Model picker providers", providers, "Comma-separated; empty shows every provider. Each harness's own default is always included."),
       h("label", { class: "check" }, notify, "Notify me when a character finishes while the app is hidden"),
-      h("label", { class: "check" }, thinking, "Show thinking blocks in replies"),
+      h("label", { class: "check" }, thinking, "Allow thinking blocks in replies"),
+      h("label", { class: "check" }, showWork, "Show every step (commands, thoughts) instead of one folded line"),
       h("label", { class: "check" }, finSound, "Play a chime when a character finishes"),
       h("label", { class: "check" }, finVoice, h("span", {}, "Say the character's finish line, like “Scout has findings.”"),
         h("button", { class: "btn", style: "margin-left:auto;padding:3px 10px;font-size:12px", onclick: (e) => { e.preventDefault(); desk.previewFinish(S.active); } }, `Preview ${C().name}`)),
@@ -1777,7 +2323,7 @@ document.addEventListener("keydown", (e) => {
   // ⌘N ⌘K ⌘B ⌘\ ⌘, ⌘/ ⌘⇧E come from the native menu (desk.onMenu).
   if (e.metaKey && e.shiftKey && e.key.toLowerCase() === "d") { e.preventDefault(); toggleVoice(); }
   else if (e.metaKey && /^[1-9]$/.test(e.key)) {
-    const busy = !$("#modal").hidden || document.querySelector(".sheet-back") || (/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName) && document.activeElement.value);
+    const busy = document.querySelector(".page") || !$("#confirm").hidden || (/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName) && document.activeElement.value);
     const c = charGroups().flat[+e.key - 1];
     if (c && !busy) { e.preventDefault(); selectCharacter(c.id); }
   }

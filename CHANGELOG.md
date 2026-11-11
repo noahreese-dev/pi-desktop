@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+- **Confirmed in a native dialog:** saving an AGENTS.md (folder or global), adding a skill, and installing Pi on a server,
+  same as adding a connector or creating an agent. The page shows model output, so it can't approve these on its own.
+- **ssh sockets in a private folder:** connection sharing uses `~/.ssh/pidesk` (only you can open it) instead of `/tmp`.
+- **Connector logos are bundled only:** no lookups on the internet; unknown connectors get the generic icon.
+- **No more pop-ups:** forms (Settings, New agent, Connect a server, Add connector, Add skill and the rest) open as a page
+  in the main area with a Back arrow, and confirmations ("Delete chat?") are an inline card above the message box.
+  Kept as system dialogs on purpose: confirmations that guard something an agent could trigger (adding a connector,
+  creating an agent, removing a skill, quitting while work is running) and the macOS file pickers.
+- **Agent questions are always inline:** every question an agent asks (choices, pick-all-that-apply, yes/no, a line of text,
+  an editor) now shows as a card above the message box on the chat that asked. Before, only single-choice questions did;
+  the others opened a pop-up over the whole window.
+- **Add command-line tools from the app:** the Connectors tab has an Add button for command-line tools. It searches the
+  programs installed on this Mac and saves the pick to the agent's character file; × removes one. Before, the list could
+  only be edited by hand in the file.
+- **Agents can be isolated:** a character file with `isolated: true` shows only the agent's own skills and the connectors
+  it names in `mcp`, not everything installed on this Mac. Before, every agent's panels listed
+  all global skills and MCP servers, whether or not it loaded them. Existing characters are unchanged.
+- **Command-line tools in Connectors:** a character file can list the CLIs its agent relies on (`cli`). The Connectors tab
+  shows them above the MCP connectors, each marked installed or missing on this Mac or on the agent's server.
+- **Skills an agent carries show up:** the Skills tab now lists skills kept in an agent's own folder (`skills/` and
+  pinned `vendor/<repo>/…/skills`), for the open agent only, next to the global and package skills every agent loads. Before, a
+  harness's own skills were invisible.
+- **Quieter chats:** everything an agent does before its final reply (thoughts, commands, file lookups, edits and
+  interim notes) folds into one line ("Worked · 8 thoughts, 9 commands, 2 edits"; "Working · Running …" while live).
+  Click it to see every step. Only the final reply stays in view; edits, failed commands and questions that come
+  after it stay visible too. Settings → "Show every step" (`showWork`) turns the old full list back on.
+- **Questions show inline:** when an agent offers choices, they appear as a card above the composer instead of a
+  pop-up. Descriptions are cut to one short line (hover for the full text), the option marked "(Recommended)" is
+  highlighted, and number keys still pick.
+- **`launchPrefix` setting:** start every agent through a command of your choice (for example a key proxy or sandbox),
+  so the app can run Pi the same way your terminal does. Leave it empty to change nothing.
+
 ## 0.3.0 (2026-11-09)
 
 - **Compact button:** the context meter shows tokens in use, turns amber as a chat grows (400k, or 60 % of a smaller

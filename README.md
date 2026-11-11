@@ -78,13 +78,16 @@ suggestions, finish line), run `npm run faces`, restart. Already have a harness?
 |---|---|---|
 | `userName` | your macOS user name | Characters greet you with it. |
 | `harnessDir` | `~/bin` | Where `pi-*` scripts are found. |
+| `agentsDir` | `~/Documents/Pi Desktop` | New agents get their own working folder here, named `pi-<id>`. |
 | `defaultCharacter` | `base` | Shown on first launch. |
 | `hotkey` | `Alt+Shift+Space` | Global show/hide ([Electron accelerator](https://www.electronjs.org/docs/latest/api/accelerator)). |
 | `whisperModel` | `models/ggml-small.en-q5_1.bin` | For voice typing. Relative paths are inside the repo (`models/` is gitignored). |
 | `notifyWhenHidden` | `true` | Notification when a reply finishes while the app is hidden. |
-| `showThinking` | `true` | Show the model's thinking (folded) in replies. |
+| `showThinking` | `true` | Allow the model's thinking (folded) in replies. |
+| `showWork` | `false` | `false` folds everything before the final reply (thoughts, commands, edits, interim notes) into one line ("8 thoughts, 9 commands, 2 edits"). `true` shows every step. |
 | `finishSound`, `finishVoice` | `true` | The chime and the spoken line when a reply finishes. |
 | `finishVolume` | `0.8` | Volume of the finish sound and voice, 0 to 1. |
+| `launchPrefix` | `[]` | A command that starts every agent, e.g. `["av","run","mac-tools","12h","--"]` to run Pi through a key proxy the way your terminal does. Empty = start agents directly. Not used for agents on a server. |
 | `modelProviders` | `[]` | Limit the model picker to these providers (plus each harness's default). Empty = all. |
 | `memory` | `null` | `{ "url", "bank", "explorer" }` turns on the Memory tab ([Hindsight](https://github.com/vectorize-io/hindsight)). |
 

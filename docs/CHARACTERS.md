@@ -37,6 +37,9 @@ Every field is optional. Restart the app after editing. `characters/_template.js
 | `persona` | One or two sentences passed to Pi as `--append-system-prompt`. Leave it out to add nothing to the context. |
 | `panel` | `"files"` (default) or `"learning"` (adds Course, Lesson and Profile tabs; see below). |
 | `panelOpen` | Open the side panel the first time this character is picked. |
+| `cli` | `["gh", { "name": "vercel", "use": "deploys" }]`: command-line tools this agent relies on. The Connectors tab lists them first, with whether each is installed on this Mac (or on the agent's server). Plain binary names only. Add or remove tools from the Connectors tab (it searches the programs on this Mac and saves the list here). Being listed grants nothing: every program on PATH is already usable. |
+| `isolated` | `true` when the agent's launcher blocks global skills and MCP servers (`-ns`, `--no-mcp`). The Skills tab then lists only the agent's own skills and Connectors only the servers named in `mcp`, and nothing else from this Mac. Default `false`: every global skill and connector is listed, as before. |
+| `mcp` | `["linear"]`: the MCP servers an isolated agent actually uses. Omit it for none. Only read when `isolated` is `true`. |
 | `taskTemplates` | `[{ "name", "schedule", "prompt" }]` routines offered as one-click ideas in the Tasks tab. |
 | `finish` | `{ "sound", "voice", "say", "render", "notify" }`: what plays when a reply finishes, and the notification title (below). |
 | `pinned` | Sorts the character earlier in the menu-bar menu (which lists every character that has a file). |
